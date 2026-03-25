@@ -42,7 +42,7 @@ const defaultCourse = () => ({
 });
 
 // ── Storage helpers (local server → data.json) ───────────────────────────────
-const API = "http://localhost:3001/api/data";
+const API = "/api/data";
 
 async function loadData() {
   try {
