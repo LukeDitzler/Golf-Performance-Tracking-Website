@@ -41,6 +41,7 @@ const defaultCourse = () => ({
   yardage: "",
   slope: "",
   rating: "",
+  state: "",
   holes: Array.from({ length: 18 }, (_, i) => ({
     hole: i + 1,
     par: 4,
@@ -243,8 +244,11 @@ function AuthModal({ onClose }) {
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ rounds }) {
+function Dashboard({ rounds, courses }) {
+  const [mode, setMode] = useState("basic");
   const [timeFilter, setTimeFilter] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [courseFilter, setCourseFilter] = useState("all");
 
   if (rounds.length === 0) return (
     <div style={{ textAlign: "center", padding: "80px 0", color: C.muted }}>
@@ -253,12 +257,39 @@ function Dashboard({ rounds }) {
     </div>
   );
 
+  // ── Build filter options from actual round data ────────────────────────────
+  const roundsWithCourses = rounds.map(r => {
+    const courseObj = courses.find(c => c.id === r.courseId);
+    return { ...r, courseObj };
+  });
+
+  // States: only from courses that have logged rounds
+  const statesInUse = [...new Set(
+    roundsWithCourses.map(r => r.courseObj?.state).filter(Boolean)
+  )].sort();
+
+  // Courses: only those with at least one logged round
+  const coursesWithRounds = [...new Map(
+    roundsWithCourses
+      .filter(r => r.courseObj)
+      .map(r => [r.courseObj.id, r.courseObj])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  // ── Apply all filters ─────────────────────────────────────────────────────
   const now = new Date();
-  const filteredRounds = rounds.filter(r => {
-    if (timeFilter === "all") return true;
-    const months = timeFilter === "1m" ? 1 : 3;
-    const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
-    return new Date(r.date) >= cutoff;
+  const filteredRounds = roundsWithCourses.filter(r => {
+    if (timeFilter !== "all") {
+      const months = timeFilter === "1m" ? 1 : 3;
+      const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
+      if (new Date(r.date) < cutoff) return false;
+    }
+    if (stateFilter !== "all") {
+      if (r.courseObj?.state !== stateFilter) return false;
+    }
+    if (courseFilter !== "all") {
+      if (r.courseId !== courseFilter) return false;
+    }
+    return true;
   });
 
   const allHoles = filteredRounds.flatMap(r => r.holes.filter(h => h.score !== ""));
@@ -270,11 +301,11 @@ function Dashboard({ rounds }) {
 
   const girHoles = allHoles.filter(h => h.gir === true);
   const girPct = totalHoles ? Math.round((girHoles.length / totalHoles) * 100) : 0;
-  const fhHoles    = allHoles.filter(h => h.par > 3 && h.fh !== null);
-  const fhHit      = fhHoles.filter(h => h.fh === true).length;
-  const fhLeft     = fhHoles.filter(h => h.fh === "left").length;
-  const fhRight    = fhHoles.filter(h => h.fh === "right").length;
-  const fhPct      = fhHoles.length ? Math.round((fhHit / fhHoles.length) * 100) : 0;
+  const fhHoles  = allHoles.filter(h => h.par > 3 && h.fh !== null);
+  const fhHit    = fhHoles.filter(h => h.fh === true).length;
+  const fhLeft   = fhHoles.filter(h => h.fh === "left").length;
+  const fhRight  = fhHoles.filter(h => h.fh === "right").length;
+  const fhPct    = fhHoles.length ? Math.round((fhHit / fhHoles.length) * 100) : 0;
   const puttHoles = allHoles.filter(h => h.putts !== "");
   const avgPutts = puttHoles.length ? (puttHoles.reduce((s, h) => s + +h.putts, 0) / puttHoles.length).toFixed(1) : "—";
   const udHoles  = allHoles.filter(h => h.upAndDown !== null && h.upAndDown !== "na");
@@ -285,7 +316,7 @@ function Dashboard({ rounds }) {
     const hs = r.holes.filter(h => h.score !== "");
     if (!hs.length) return null;
     const rel = hs.reduce((s, h) => s + (+h.score - h.par), 0);
-    return { course: r.course || "Unnamed", date: r.date, rel };
+    return { course: r.course || r.courseObj?.name || "Unnamed", date: r.date, rel };
   }).filter(Boolean).slice(-8);
 
   const birdieOrBetter = allHoles.filter(h => +h.score <= h.par - 1).length;
@@ -295,7 +326,7 @@ function Dashboard({ rounds }) {
 
   const clubMap = {};
   allHoles.forEach(h => {
-    if (h.approachClub && h.approachClub !== "") {
+    if (h.approachClub) {
       if (!clubMap[h.approachClub]) clubMap[h.approachClub] = { attempts: 0, gir: 0 };
       clubMap[h.approachClub].attempts++;
       if (h.gir === true) clubMap[h.approachClub].gir++;
@@ -307,43 +338,120 @@ function Dashboard({ rounds }) {
     .sort((a, b) => {
       const ai = APPROACH_ORDER.indexOf(a.club), bi = APPROACH_ORDER.indexOf(b.club);
       if (ai === -1 && bi === -1) return b.attempts - a.attempts;
-      if (ai === -1) return 1;
-      if (bi === -1) return -1;
+      if (ai === -1) return 1; if (bi === -1) return -1;
       return ai - bi;
     });
 
-  const TIME_FILTERS = [
-    { id: "all", label: "All" },
-    { id: "3m", label: "3 Months" },
-    { id: "1m", label: "1 Month" },
-  ];
-
   const noData = totalHoles === 0;
+  const activeFilterCount = [timeFilter !== "all", stateFilter !== "all", courseFilter !== "all"].filter(Boolean).length;
+
+  const FilterPill = ({ label, active, onClick }) => (
+    <button onClick={onClick} style={{
+      padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+      cursor: "pointer", border: `1.5px solid ${active ? C.accent : C.border}`,
+      background: active ? C.accent : "transparent",
+      color: active ? "#fff" : C.muted,
+      transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap",
+    }}>{label}</button>
+  );
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
-      {/* Time filter pills */}
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        {TIME_FILTERS.map(f => (
-          <button key={f.id} onClick={() => setTimeFilter(f.id)} style={{
-            padding: "5px 16px", borderRadius: 20, fontSize: 13, fontWeight: 600,
-            cursor: "pointer", border: `1.5px solid ${timeFilter === f.id ? C.accent : C.border}`,
-            background: timeFilter === f.id ? C.accent : "transparent",
-            color: timeFilter === f.id ? "#fff" : C.muted,
-            transition: "all 0.15s", fontFamily: "inherit",
-          }}>{f.label}</button>
-        ))}
-        {timeFilter !== "all" && (
-          <span style={{ fontSize: 12, color: C.muted, marginLeft: 4 }}>
-            {totalRounds} round{totalRounds !== 1 ? "s" : ""}
-          </span>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Mode toggle + filter bar ──────────────────────────────────────── */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
+
+        {/* Basic / Advanced toggle */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", background: C.bg, borderRadius: 12, padding: 3, gap: 2, border: `1px solid ${C.border}` }}>
+            {["basic", "advanced"].map(m => (
+              <button key={m} onClick={() => setMode(m)} style={{
+                padding: "6px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+                cursor: "pointer", border: "none", fontFamily: "inherit",
+                background: mode === m ? C.accent : "transparent",
+                color: mode === m ? "#fff" : C.muted,
+                transition: "all 0.18s",
+              }}>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
+            ))}
+          </div>
+          {activeFilterCount > 0 && (
+            <button onClick={() => { setTimeFilter("all"); setStateFilter("all"); setCourseFilter("all"); }} style={{
+              fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`,
+              borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit",
+            }}>Clear filters ×</button>
+          )}
+        </div>
+
+        {/* Divider */}
+        <div style={{ height: 1, background: C.border }} />
+
+        {/* Filter rows */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+
+          {/* Time */}
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>Time</span>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              {[{ id: "all", label: "All time" }, { id: "3m", label: "3 months" }, { id: "1m", label: "1 month" }].map(f => (
+                <FilterPill key={f.id} label={f.label} active={timeFilter === f.id} onClick={() => setTimeFilter(f.id)} />
+              ))}
+            </div>
+          </div>
+
+          {/* State */}
+          {statesInUse.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>State</span>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <FilterPill label="All" active={stateFilter === "all"} onClick={() => { setStateFilter("all"); setCourseFilter("all"); }} />
+                {statesInUse.map(s => (
+                  <FilterPill key={s} label={s} active={stateFilter === s} onClick={() => { setStateFilter(s); setCourseFilter("all"); }} />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Course */}
+          {coursesWithRounds.length > 0 && (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>Course</span>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <FilterPill label="All" active={courseFilter === "all"} onClick={() => setCourseFilter("all")} />
+                {coursesWithRounds
+                  .filter(c => stateFilter === "all" || c.state === stateFilter)
+                  .map(c => (
+                    <FilterPill key={c.id} label={c.name} active={courseFilter === c.id} onClick={() => setCourseFilter(c.id)} />
+                  ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Active filter summary */}
+        {(totalRounds > 0 || activeFilterCount > 0) && (
+          <div style={{ fontSize: 12, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+            Showing <span style={{ fontWeight: 700, color: C.text }}>{totalRounds}</span> round{totalRounds !== 1 ? "s" : ""}
+            {activeFilterCount > 0 && " matching active filters"}
+          </div>
         )}
       </div>
 
-      {noData ? (
+      {/* ── Advanced placeholder ──────────────────────────────────────────── */}
+      {mode === "advanced" && (
+        <div style={{ background: C.surface, border: `1.5px dashed ${C.border}`, borderRadius: 16, padding: "60px 40px", textAlign: "center" }}>
+          <div style={{ fontSize: 32, marginBottom: 12 }}>📐</div>
+          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>Advanced Analytics</div>
+          <div style={{ fontSize: 14, color: C.muted, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
+            Strokes Gained and other advanced stats are coming here. This workspace is reserved for deeper analysis that requires additional data entry per round.
+          </div>
+        </div>
+      )}
+
+      {/* ── Basic stats (hidden in advanced mode) ────────────────────────── */}
+      {mode === "basic" && (noData ? (
         <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
           <div style={{ fontSize: 36 }}>🗓️</div>
-          <div style={{ marginTop: 10, fontSize: 15 }}>No rounds in this period.</div>
+          <div style={{ marginTop: 10, fontSize: 15 }}>No rounds match the active filters.</div>
         </div>
       ) : (<>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
@@ -418,8 +526,7 @@ function Dashboard({ rounds }) {
 
       {/* ── Scoring by Par Type ─────────────────────────────────────────────── */}
       {(() => {
-        const parTypes = [3, 4, 5];
-        const parData = parTypes.map(par => {
+        const parData = [3, 4, 5].map(par => {
           const hs = allHoles.filter(h => h.par === par);
           if (!hs.length) return null;
           const avgRel = hs.reduce((s, h) => s + (+h.score - h.par), 0) / hs.length;
@@ -437,12 +544,6 @@ function Dashboard({ rounds }) {
               {parData.map(({ par, count, avgRel, bird, pars: p, bog, dbl }) => {
                 const relCol = avgRel <= 0 ? C.accentMid : avgRel <= 0.5 ? C.yellow : C.red;
                 const relStr = avgRel >= 0 ? `+${avgRel.toFixed(2)}` : avgRel.toFixed(2);
-                const dist = [
-                  { label: "Birdie+", count: bird, color: C.accentMid },
-                  { label: "Par", count: p, color: C.accent },
-                  { label: "Bogey", count: bog, color: C.yellow },
-                  { label: "Dbl+", count: dbl, color: C.red },
-                ];
                 return (
                   <div key={par}>
                     <div style={{ display: "flex", alignItems: "baseline", gap: 10, marginBottom: 10 }}>
@@ -451,7 +552,12 @@ function Dashboard({ rounds }) {
                       <span style={{ fontSize: 12, color: C.muted }}>avg / hole · {count} holes</span>
                     </div>
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
-                      {dist.map(({ label, count: c, color }) => (
+                      {[
+                        { label: "Birdie+", count: bird, color: C.accentMid },
+                        { label: "Par", count: p, color: C.accent },
+                        { label: "Bogey", count: bog, color: C.yellow },
+                        { label: "Dbl+", count: dbl, color: C.red },
+                      ].map(({ label, count: c, color }) => (
                         <div key={label} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                             <span style={{ color: C.muted }}>{label}</span>
@@ -476,20 +582,17 @@ function Dashboard({ rounds }) {
         if (!girHit.length && !girMiss.length) return null;
         const avgHit = girHit.length ? (girHit.reduce((s, h) => s + (+h.score - h.par), 0) / girHit.length) : null;
         const avgMiss = girMiss.length ? (girMiss.reduce((s, h) => s + (+h.score - h.par), 0) / girMiss.length) : null;
-
-        const roundGIR = rounds.map(r => {
+        const roundGIR = filteredRounds.map(r => {
           const hs = r.holes.filter(h => h.score !== "");
           if (hs.length < 9) return null;
           const girCount = hs.filter(h => h.gir === true).length;
           const girPctR = Math.round(girCount / hs.length * 100);
           const rel = hs.reduce((s, h) => s + (+h.score - h.par), 0);
-          return { date: r.date, course: r.course || "Unnamed", girPct: girPctR, rel };
+          return { date: r.date, course: r.course || r.courseObj?.name || "Unnamed", girPct: girPctR, rel };
         }).filter(Boolean).sort((a, b) => a.girPct - b.girPct);
-
         const fmtRel = v => v === null ? "—" : (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
         const hitCol = avgHit !== null ? (avgHit <= 0 ? C.accentMid : avgHit <= 0.3 ? C.yellow : C.red) : C.muted;
         const missCol = avgMiss !== null ? (avgMiss <= 1 ? C.yellow : C.red) : C.muted;
-
         return (
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
             <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Score vs GIR</div>
@@ -532,7 +635,6 @@ function Dashboard({ rounds }) {
           { label: "Missed GIR", holes: allHoles.filter(h => h.gir === false && h.putts !== "") },
         ].filter(p => p.holes.length > 0);
         if (!panels.length) return null;
-
         return (
           <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
             <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Putts by GIR</div>
@@ -543,11 +645,6 @@ function Dashboard({ rounds }) {
                 const two = holes.filter(h => +h.putts === 2).length;
                 const three = holes.filter(h => +h.putts >= 3).length;
                 const avgCol = +avg <= 1.7 ? C.accentMid : +avg <= 2.0 ? C.yellow : C.red;
-                const puttDist = [
-                  { label: "1-putt", count: one, color: C.accentMid },
-                  { label: "2-putt", count: two, color: C.accent },
-                  { label: "3-putt+", count: three, color: C.red },
-                ];
                 return (
                   <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
                     <div>
@@ -558,7 +655,11 @@ function Dashboard({ rounds }) {
                       </div>
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {puttDist.map(({ label: pl, count, color }) => (
+                      {[
+                        { label: "1-putt", count: one, color: C.accentMid },
+                        { label: "2-putt", count: two, color: C.accent },
+                        { label: "3-putt+", count: three, color: C.red },
+                      ].map(({ label: pl, count, color }) => (
                         <div key={pl} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
                             <span style={{ color: C.muted }}>{pl}</span>
@@ -597,7 +698,7 @@ function Dashboard({ rounds }) {
           </div>
         </div>
       )}
-      </>)}
+      </>))}
     </div>
   );
 }
@@ -730,6 +831,7 @@ function Courses({ courses, onSave, onDelete, userId }) {
               <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
                 <span style={{ fontSize: 12, color: C.muted }}>Par {c.par}</span>
                 {c.yardage && <span style={{ fontSize: 12, color: C.muted }}>{c.yardage} yds</span>}
+                {c.state && <span style={{ fontSize: 12, color: C.muted }}>{c.state}</span>}
                 {c.rating && <span style={{ fontSize: 12, color: C.muted }}>Rating {c.rating}</span>}
                 {c.slope && <span style={{ fontSize: 12, color: C.muted }}>Slope {c.slope}</span>}
                 {!isOwner && <span style={{ fontSize: 11, color: C.border, fontStyle: "italic" }}>added by another user</span>}
@@ -758,8 +860,8 @@ function Courses({ courses, onSave, onDelete, userId }) {
           <input value={course.name} onChange={e => setCourse(c => ({ ...c, name: e.target.value }))} placeholder="e.g. Pebble Beach" style={inputStyle} />
         </div>
         <div>
-          <label style={labelStyle}>Yardage</label>
-          <input type="number" value={course.yardage} readOnly style={{ ...inputStyle, background: C.accentLight, color: C.accent, fontWeight: 700 }} />
+          <label style={labelStyle}>State</label>
+          <input value={course.state} onChange={e => setCourse(c => ({ ...c, state: e.target.value.toUpperCase().slice(0, 2) }))} placeholder="CA" maxLength={2} style={inputStyle} />
         </div>
         <div>
           <label style={labelStyle}>Course Rating</label>
@@ -768,6 +870,10 @@ function Courses({ courses, onSave, onDelete, userId }) {
         <div>
           <label style={labelStyle}>Slope Rating</label>
           <input type="number" value={course.slope} onChange={e => setCourse(c => ({ ...c, slope: e.target.value }))} placeholder="133" style={inputStyle} />
+        </div>
+        <div>
+          <label style={labelStyle}>Yardage</label>
+          <input type="number" value={course.yardage} readOnly style={{ ...inputStyle, background: C.accentLight, color: C.accent, fontWeight: 700 }} />
         </div>
         <div>
           <label style={labelStyle}>Total Par</label>
@@ -1517,7 +1623,7 @@ export default function GolfTracker() {
           <div style={{ padding: 40, color: C.muted }}>Loading…</div>
         ) : (
           <>
-            {tab === "dashboard" && <Dashboard rounds={rounds} />}
+            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} />}
             {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
