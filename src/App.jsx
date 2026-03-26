@@ -1578,8 +1578,8 @@ export default function GolfTracker() {
       {/* Header */}
       <div className="fairway-nav" style={{ borderBottom: `1px solid ${C.border}`, padding: "16px 3vw", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
-          <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: C.accent }}>⛳ Fairway</span>
-          <span style={{ fontSize: 13, color: C.muted, fontFamily: "'DM Mono', monospace" }}>golf tracker</span>
+          <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: C.accent }}>⛳ Fairway Caddie</span>
+          <span style={{ fontSize: 13, color: C.muted, fontFamily: "'DM Mono', monospace" }}>powered by BGM</span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
           {session && tabs.map(t => (
@@ -1612,7 +1612,7 @@ export default function GolfTracker() {
         {!session ? (
           <div style={{ textAlign: "center", padding: "100px 0", color: C.muted }}>
             <div style={{ fontSize: 52 }}>⛳</div>
-            <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: C.text }}>Fairway</div>
+            <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: C.text }}>Fairway Caddie</div>
             <div style={{ marginTop: 8, fontSize: 15, marginBottom: 28 }}>Track your rounds, improve your game.</div>
             <button onClick={() => setShowAuth(true)} style={{
               background: C.accent, color: "#fff", border: "none", borderRadius: 12,
