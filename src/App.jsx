@@ -1,4 +1,11 @@
 import { useState, useEffect, useCallback } from "react";
+import { createClient } from "@supabase/supabase-js";
+
+// ── Supabase auth client (uses public anon key — safe for browser) ────────────
+const supabase = createClient(
+  import.meta.env.VITE_SUPABASE_URL,
+  import.meta.env.VITE_SUPABASE_ANON_KEY
+);
 
 // ALL_CLUBS is the single source of truth for club dropdowns throughout the app
 const ALL_CLUBS = ["Dr","3w","Hybrid","4i","5i","6i","7i","8i","9i","PW","GW","SW","LW"];
@@ -41,12 +48,14 @@ const defaultCourse = () => ({
   })),
 });
 
-// ── Storage helpers (local server → data.json) ───────────────────────────────
+// ── Storage helpers — send JWT token so API knows which user ─────────────────
 const API = "/api/data";
 
-async function loadData() {
+async function loadData(token) {
   try {
-    const res = await fetch(API);
+    const res = await fetch(API, {
+      headers: { "Authorization": `Bearer ${token}` },
+    });
     if (!res.ok) throw new Error();
     return await res.json();
   } catch {
@@ -54,11 +63,14 @@ async function loadData() {
   }
 }
 
-async function saveData(rounds, courses) {
+async function saveData(rounds, courses, token) {
   try {
     await fetch(API, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+      },
       body: JSON.stringify({ rounds, courses }),
     });
   } catch (err) {
@@ -121,6 +133,79 @@ function MiniBar({ pct, color = C.accentMid }) {
   return (
     <div style={{ height: 6, borderRadius: 3, background: C.border, overflow: "hidden", width: "100%" }}>
       <div style={{ height: "100%", width: `${Math.min(100, pct)}%`, background: color, borderRadius: 3, transition: "width 0.4s ease" }} />
+    </div>
+  );
+}
+
+// ── AUTH MODAL ───────────────────────────────────────────────────────────────
+function AuthModal({ onClose }) {
+  const [mode, setMode] = useState("login"); // "login" | "signup"
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  const handleSubmit = async () => {
+    setError(""); setMessage(""); setLoading(true);
+    if (mode === "login") {
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      if (error) setError(error.message);
+      else onClose();
+    } else {
+      const { error } = await supabase.auth.signUp({ email, password });
+      if (error) setError(error.message);
+      else setMessage("Check your email for a confirmation link, then log in.");
+    }
+    setLoading(false);
+  };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
+      onClick={onClose}>
+      <div style={{ background: C.surface, borderRadius: 20, padding: 36, width: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
+        onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>
+          {mode === "login" ? "Welcome back" : "Create account"}
+        </div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 24 }}>
+          {mode === "login" ? "Log in to access your rounds." : "Sign up to start tracking your game."}
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div>
+            <label style={labelStyle}>Email</label>
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
+              placeholder="you@example.com" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          </div>
+          <div>
+            <label style={labelStyle}>Password</label>
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+              placeholder="••••••••" style={inputStyle}
+              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+          </div>
+
+          {error && <div style={{ fontSize: 13, color: C.red, background: "#fdf0ef", borderRadius: 8, padding: "8px 12px" }}>{error}</div>}
+          {message && <div style={{ fontSize: 13, color: C.accent, background: C.accentLight, borderRadius: 8, padding: "8px 12px" }}>{message}</div>}
+
+          <button onClick={handleSubmit} disabled={loading} style={{
+            background: C.accent, color: "#fff", border: "none", borderRadius: 10,
+            padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer",
+            opacity: loading ? 0.7 : 1, transition: "opacity 0.15s", fontFamily: "inherit",
+          }}>
+            {loading ? "…" : mode === "login" ? "Log In" : "Sign Up"}
+          </button>
+
+          <div style={{ textAlign: "center", fontSize: 13, color: C.muted }}>
+            {mode === "login" ? "Don't have an account? " : "Already have an account? "}
+            <span onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setMessage(""); }}
+              style={{ color: C.accent, fontWeight: 600, cursor: "pointer" }}>
+              {mode === "login" ? "Sign up" : "Log in"}
+            </span>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1170,28 +1255,52 @@ export default function GolfTracker() {
   const [courses, setCourses] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [editingRound, setEditingRound] = useState(null);
+  const [session, setSession] = useState(null);
+  const [showAuth, setShowAuth] = useState(false);
 
+  // ── Listen for auth state changes (login, logout, page refresh) ────────────
   useEffect(() => {
-    loadData().then(({ rounds: r, courses: c }) => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (!session) {
+        // Logged out — clear local data
+        setRounds([]);
+        setCourses([]);
+        setLoaded(false);
+      }
+    });
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // ── Load data whenever session changes ─────────────────────────────────────
+  useEffect(() => {
+    if (!session?.access_token) return;
+    setLoaded(false);
+    loadData(session.access_token).then(({ rounds: r, courses: c }) => {
       setRounds(r || []);
       setCourses(c || []);
       setLoaded(true);
     });
-  }, []);
+  }, [session]);
+
+  const token = session?.access_token;
 
   const handleSaveRound = useCallback((round) => {
     setRounds(prev => {
       const updatedRounds = [...prev, round];
-      saveData(updatedRounds, courses);
+      saveData(updatedRounds, courses, token);
       return updatedRounds;
     });
-  }, [courses]);
+  }, [courses, token]);
 
   const handleDeleteRound = useCallback((id) => {
     const updatedRounds = rounds.filter(r => r.id !== id);
     setRounds(updatedRounds);
-    saveData(updatedRounds, courses);
-  }, [rounds, courses]);
+    saveData(updatedRounds, courses, token);
+  }, [rounds, courses, token]);
 
   const handleEditRound = useCallback((round) => {
     setEditingRound(round);
@@ -1201,27 +1310,25 @@ export default function GolfTracker() {
   const handleUpdateRound = useCallback((round) => {
     setRounds(prev => {
       const updatedRounds = prev.map(r => r.id === round.id ? round : r);
-      saveData(updatedRounds, courses);
+      saveData(updatedRounds, courses, token);
       return updatedRounds;
     });
     setEditingRound(null);
-  }, [courses]);
+  }, [courses, token]);
 
   const handleSaveCourse = useCallback((course, editingId) => {
     const updatedCourses = editingId
       ? courses.map(c => c.id === editingId ? { ...course, id: editingId } : c)
       : [...courses, { ...course, id: Date.now() }];
     setCourses(updatedCourses);
-    saveData(rounds, updatedCourses);
-  }, [rounds, courses]);
+    saveData(rounds, updatedCourses, token);
+  }, [rounds, courses, token]);
 
   const handleDeleteCourse = useCallback((id) => {
     const updatedCourses = courses.filter(c => c.id !== id);
     setCourses(updatedCourses);
-    saveData(rounds, updatedCourses);
-  }, [rounds, courses]);
-
-  if (!loaded) return <div style={{ padding: 40, color: C.muted, fontFamily: "Georgia, serif" }}>Loading…</div>;
+    saveData(rounds, updatedCourses, token);
+  }, [rounds, courses, token]);
 
   const tabs = [
     { id: "dashboard", label: "Dashboard" },
@@ -1234,7 +1341,6 @@ export default function GolfTracker() {
     <div style={{ fontFamily: "'Georgia', 'Times New Roman', serif", background: C.bg, minHeight: "100vh", color: C.text }}>
       <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
-      {/* Global reset — removes body/html margin that can squeeze layout */}
       <style>{`
         *, *::before, *::after { box-sizing: border-box; }
         html, body, #root { margin: 0; padding: 0; width: 100%; }
@@ -1246,14 +1352,16 @@ export default function GolfTracker() {
         }
       `}</style>
 
+      {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+
       {/* Header */}
       <div className="fairway-nav" style={{ borderBottom: `1px solid ${C.border}`, padding: "16px 3vw", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 10 }}>
           <span style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em", color: C.accent }}>⛳ Fairway</span>
           <span style={{ fontSize: 13, color: C.muted, fontFamily: "'DM Mono', monospace" }}>golf tracker</span>
         </div>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {tabs.map(t => (
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+          {session && tabs.map(t => (
             <button key={t.id} onClick={() => { setTab(t.id); if (t.id !== "log") setEditingRound(null); }} style={{
               background: tab === t.id ? C.accentLight : "transparent",
               border: `1px solid ${tab === t.id ? C.accentMid : "transparent"}`,
@@ -1264,15 +1372,44 @@ export default function GolfTracker() {
               {t.label}
             </button>
           ))}
+          {session ? (
+            <button onClick={() => supabase.auth.signOut()} style={{
+              background: "transparent", border: `1px solid ${C.border}`,
+              color: C.muted, borderRadius: 8, padding: "6px 14px",
+              fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            }}>Log Out</button>
+          ) : (
+            <button onClick={() => setShowAuth(true)} style={{
+              background: C.accent, color: "#fff", border: "none",
+              borderRadius: 8, padding: "6px 16px",
+              fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            }}>Log In</button>
+          )}
         </div>
       </div>
 
-      {/* Content — 94% of viewport width, centered, scales to any screen */}
+      {/* Content */}
       <div style={{ width: "94vw", margin: "0 auto", padding: "32px 0" }}>
-        {tab === "dashboard" && <Dashboard rounds={rounds} />}
-        {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
-        {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
-        {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} />}
+        {!session ? (
+          <div style={{ textAlign: "center", padding: "100px 0", color: C.muted }}>
+            <div style={{ fontSize: 52 }}>⛳</div>
+            <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: C.text }}>Fairway</div>
+            <div style={{ marginTop: 8, fontSize: 15, marginBottom: 28 }}>Track your rounds, improve your game.</div>
+            <button onClick={() => setShowAuth(true)} style={{
+              background: C.accent, color: "#fff", border: "none", borderRadius: 12,
+              padding: "12px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
+            }}>Get Started</button>
+          </div>
+        ) : !loaded ? (
+          <div style={{ padding: 40, color: C.muted }}>Loading…</div>
+        ) : (
+          <>
+            {tab === "dashboard" && <Dashboard rounds={rounds} />}
+            {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
+            {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
+            {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} />}
+          </>
+        )}
       </div>
     </div>
   );
