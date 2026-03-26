@@ -45,37 +45,69 @@ const defaultCourse = () => ({
     hole: i + 1,
     par: 4,
     handicap: i + 1,
+    yardage: "",
   })),
 });
 
-// ── Storage helpers — send JWT token so API knows which user ─────────────────
+// ── Storage helpers ───────────────────────────────────────────────────────────
 const API = "/api/data";
+const COURSES_API = "/api/courses";
 
-async function loadData(token) {
+// Rounds — still stored per-user in golf_data
+async function loadRounds(token) {
   try {
     const res = await fetch(API, {
       headers: { "Authorization": `Bearer ${token}` },
     });
     if (!res.ok) throw new Error();
-    return await res.json();
-  } catch {
-    return { rounds: [], courses: [] };
-  }
+    const data = await res.json();
+    return data.rounds || [];
+  } catch { return []; }
 }
 
-async function saveData(rounds, courses, token) {
+async function saveRounds(rounds, token) {
   try {
     await fetch(API, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-      },
-      body: JSON.stringify({ rounds, courses }),
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ rounds }),
     });
-  } catch (err) {
-    console.error("Could not save data:", err);
-  }
+  } catch (err) { console.error("Could not save rounds:", err); }
+}
+
+// Courses — shared across all users
+async function loadCourses() {
+  try {
+    const res = await fetch(COURSES_API);
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch { return []; }
+}
+
+async function createCourse(course, token) {
+  const res = await fetch(COURSES_API, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify(course),
+  });
+  return await res.json();
+}
+
+async function updateCourse(course, token) {
+  const res = await fetch(COURSES_API, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify(course),
+  });
+  return await res.json();
+}
+
+async function deleteCourse(id, token) {
+  await fetch(COURSES_API, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+    body: JSON.stringify({ id }),
+  });
 }
 
 // ── Design tokens ────────────────────────────────────────────────────────────
@@ -570,8 +602,86 @@ function Dashboard({ rounds }) {
   );
 }
 
+// ── COURSE SEARCH DROPDOWN ───────────────────────────────────────────────────
+function CourseSearch({ courses, value, onChange }) {
+  const [query, setQuery] = useState(value?.name || "");
+  const [open, setOpen] = useState(false);
+  const [highlighted, setHighlighted] = useState(0);
+  const ref = useCallback(node => {
+    if (!node) return;
+    const handler = e => { if (!node.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const filtered = query.trim().length === 0
+    ? courses
+    : courses.filter(c => c.name.toLowerCase().includes(query.toLowerCase()));
+
+  const select = (course) => {
+    setQuery(course.name);
+    setOpen(false);
+    onChange(course);
+  };
+
+  const handleKey = (e) => {
+    if (!open) { if (e.key === "ArrowDown" || e.key === "Enter") setOpen(true); return; }
+    if (e.key === "ArrowDown") { e.preventDefault(); setHighlighted(h => Math.min(h + 1, filtered.length - 1)); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); setHighlighted(h => Math.max(h - 1, 0)); }
+    else if (e.key === "Enter") { e.preventDefault(); if (filtered[highlighted]) select(filtered[highlighted]); }
+    else if (e.key === "Escape") setOpen(false);
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <input
+        value={query}
+        onChange={e => { setQuery(e.target.value); setOpen(true); setHighlighted(0); onChange(null); }}
+        onFocus={() => setOpen(true)}
+        onKeyDown={handleKey}
+        placeholder="Search courses…"
+        style={inputStyle}
+      />
+      {open && filtered.length > 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+          background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10,
+          marginTop: 4, maxHeight: 240, overflowY: "auto",
+          boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+        }}>
+          {filtered.map((c, i) => (
+            <div key={c.id} onMouseDown={() => select(c)}
+              style={{
+                padding: "10px 14px", cursor: "pointer", fontSize: 14,
+                background: i === highlighted ? C.accentLight : "transparent",
+                color: i === highlighted ? C.accent : C.text,
+                borderBottom: i < filtered.length - 1 ? `1px solid ${C.border}` : "none",
+              }}
+              onMouseEnter={() => setHighlighted(i)}>
+              <div style={{ fontWeight: 600 }}>{c.name}</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 1 }}>
+                Par {c.par}{c.yardage ? ` · ${c.yardage} yds` : ""}{c.rating ? ` · Rating ${c.rating}` : ""}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+      {open && filtered.length === 0 && query.trim().length > 0 && (
+        <div style={{
+          position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
+          background: C.surface, border: `1.5px solid ${C.border}`, borderRadius: 10,
+          marginTop: 4, padding: "12px 14px", fontSize: 13, color: C.muted,
+          boxShadow: "0 8px 24px rgba(0,0,0,0.1)",
+        }}>
+          No courses match "{query}" — add it in the Courses tab first.
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── COURSES TAB ──────────────────────────────────────────────────────────────
-function Courses({ courses, onSave, onDelete }) {
+function Courses({ courses, onSave, onDelete, userId }) {
   const [mode, setMode] = useState("list");
   const [editing, setEditing] = useState(null);
   const [course, setCourse] = useState(defaultCourse());
@@ -585,7 +695,8 @@ function Courses({ courses, onSave, onDelete }) {
       const holes = [...c.holes];
       holes[i] = { ...holes[i], [field]: val };
       const totalPar = holes.reduce((s, h) => s + (h.par ? +h.par : 0), 0);
-      return { ...c, holes, par: totalPar };
+      const totalYardage = holes.reduce((s, h) => s + (h.yardage ? +h.yardage : 0), 0);
+      return { ...c, holes, par: totalPar, yardage: totalYardage || "" };
     });
   };
 
@@ -599,7 +710,7 @@ function Courses({ courses, onSave, onDelete }) {
   if (mode === "list") return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ fontSize: 13, color: C.muted }}>{courses.length} course{courses.length !== 1 ? "s" : ""} saved</div>
+        <div style={{ fontSize: 13, color: C.muted }}>{courses.length} course{courses.length !== 1 ? "s" : ""} in the shared library</div>
         <button onClick={startNew} style={{ background: C.accent, color: "#fff", border: "none", borderRadius: 10, padding: "8px 18px", fontSize: 13, fontWeight: 700, cursor: "pointer" }}>
           + Add Course
         </button>
@@ -607,24 +718,30 @@ function Courses({ courses, onSave, onDelete }) {
       {courses.length === 0 && (
         <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
           <div style={{ fontSize: 40 }}>🏌️</div>
-          <div style={{ marginTop: 12 }}>No courses yet. Add one to speed up round logging.</div>
+          <div style={{ marginTop: 12 }}>No courses yet. Be the first to add one.</div>
         </div>
       )}
-      {courses.map(c => (
-        <div key={c.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ flex: 1 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 4 }}>{c.name}</div>
-            <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 12, color: C.muted }}>Par {c.par}</span>
-              {c.yardage && <span style={{ fontSize: 12, color: C.muted }}>{c.yardage} yds</span>}
-              {c.rating && <span style={{ fontSize: 12, color: C.muted }}>Rating {c.rating}</span>}
-              {c.slope && <span style={{ fontSize: 12, color: C.muted }}>Slope {c.slope}</span>}
+      {courses.map(c => {
+        const isOwner = c.created_by === userId;
+        return (
+          <div key={c.id} style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: 20, display: "flex", alignItems: "center", gap: 16 }}>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, color: C.text, marginBottom: 4 }}>{c.name}</div>
+              <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
+                <span style={{ fontSize: 12, color: C.muted }}>Par {c.par}</span>
+                {c.yardage && <span style={{ fontSize: 12, color: C.muted }}>{c.yardage} yds</span>}
+                {c.rating && <span style={{ fontSize: 12, color: C.muted }}>Rating {c.rating}</span>}
+                {c.slope && <span style={{ fontSize: 12, color: C.muted }}>Slope {c.slope}</span>}
+                {!isOwner && <span style={{ fontSize: 11, color: C.border, fontStyle: "italic" }}>added by another user</span>}
+              </div>
             </div>
+            {isOwner && <>
+              <button onClick={() => startEdit(c)} style={{ background: C.accentLight, color: C.accent, border: `1px solid ${C.accentMid}`, borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Edit</button>
+              <button onClick={() => onDelete(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.border, fontSize: 18, padding: 4 }}>✕</button>
+            </>}
           </div>
-          <button onClick={() => startEdit(c)} style={{ background: C.accentLight, color: C.accent, border: `1px solid ${C.accentMid}`, borderRadius: 8, padding: "6px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}>Edit</button>
-          <button onClick={() => onDelete(c.id)} style={{ background: "none", border: "none", cursor: "pointer", color: C.border, fontSize: 18, padding: 4 }}>✕</button>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 
@@ -642,7 +759,7 @@ function Courses({ courses, onSave, onDelete }) {
         </div>
         <div>
           <label style={labelStyle}>Yardage</label>
-          <input type="number" value={course.yardage} onChange={e => setCourse(c => ({ ...c, yardage: e.target.value }))} placeholder="6800" style={inputStyle} />
+          <input type="number" value={course.yardage} readOnly style={{ ...inputStyle, background: C.accentLight, color: C.accent, fontWeight: 700 }} />
         </div>
         <div>
           <label style={labelStyle}>Course Rating</label>
@@ -664,7 +781,7 @@ function Courses({ courses, onSave, onDelete }) {
           <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
             <thead>
               <tr style={{ borderBottom: `2px solid ${C.border}` }}>
-                {["Hole", "Par", "Handicap"].map(h => (
+                {["Hole", "Par", "Yardage", "Handicap"].map(h => (
                   <th key={h} style={{ padding: "8px 10px", color: C.muted, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", fontSize: 11, textAlign: h === "Hole" ? "left" : "center" }}>{h}</th>
                 ))}
               </tr>
@@ -678,6 +795,12 @@ function Courses({ courses, onSave, onDelete }) {
                       style={{ border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 8px", fontSize: 13, background: "transparent", color: C.text }}>
                       {[3, 4, 5].map(p => <option key={p}>{p}</option>)}
                     </select>
+                  </td>
+                  <td style={{ padding: "6px 10px", textAlign: "center" }}>
+                    <input type="number" min={0} value={h.yardage}
+                      onChange={e => setHoleField(i, "yardage", e.target.value)}
+                      placeholder="—"
+                      style={{ width: 64, textAlign: "center", border: `1px solid ${C.border}`, borderRadius: 6, padding: "4px 6px", fontSize: 13, background: "transparent", outline: "none", color: C.text }} />
                   </td>
                   <td style={{ padding: "6px 10px", textAlign: "center" }}>
                     <input type="number" min={1} max={18} value={h.handicap}
@@ -784,7 +907,7 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
   }, [editingRound]);
 
   const selectCourse = (courseId) => {
-    const course = courses.find(c => c.id === +courseId) || null;
+    const course = courses.find(c => c.id === courseId) || null;
     setRound(r => ({ ...defaultRound(course), date: r.date }));
   };
 
@@ -836,21 +959,14 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
         <div>
           <label style={labelStyle}>Course</label>
-          {courses.length > 0 ? (
-            <select value={round.courseId || ""}
-              onChange={e => e.target.value ? selectCourse(e.target.value) : setRound(r => ({ ...defaultRound(), date: r.date }))}
-              style={inputStyle}>
-              <option value="">— Select or type below —</option>
-              {courses.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-          ) : (
-            <input value={round.course} onChange={e => setRound(r => ({ ...r, course: e.target.value }))}
-              placeholder="Course name" style={inputStyle} />
-          )}
-          {courses.length > 0 && !round.courseId && (
-            <input value={round.course} onChange={e => setRound(r => ({ ...r, course: e.target.value }))}
-              placeholder="Or type course name" style={{ ...inputStyle, marginTop: 8 }} />
-          )}
+          <CourseSearch
+            courses={courses}
+            value={round.courseId ? courses.find(c => c.id === round.courseId) : null}
+            onChange={course => {
+              if (course) selectCourse(course.id);
+              else setRound(r => ({ ...defaultRound(), date: r.date }));
+            }}
+          />
         </div>
         <div>
           <label style={labelStyle}>Date</label>
@@ -1258,49 +1374,47 @@ export default function GolfTracker() {
   const [session, setSession] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
 
-  // ── Listen for auth state changes (login, logout, page refresh) ────────────
+  // ── Listen for auth state changes ──────────────────────────────────────────
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
+    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
-      if (!session) {
-        // Logged out — clear local data
-        setRounds([]);
-        setCourses([]);
-        setLoaded(false);
-      }
+      if (!session) { setRounds([]); setLoaded(false); }
     });
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Load data whenever session changes ─────────────────────────────────────
+  // ── Load shared courses once on mount ──────────────────────────────────────
+  useEffect(() => {
+    loadCourses().then(setCourses);
+  }, []);
+
+  // ── Load user's rounds when session is available ───────────────────────────
   useEffect(() => {
     if (!session?.access_token) return;
     setLoaded(false);
-    loadData(session.access_token).then(({ rounds: r, courses: c }) => {
+    loadRounds(session.access_token).then(r => {
       setRounds(r || []);
-      setCourses(c || []);
       setLoaded(true);
     });
   }, [session]);
 
   const token = session?.access_token;
+  const userId = session?.user?.id;
 
   const handleSaveRound = useCallback((round) => {
     setRounds(prev => {
-      const updatedRounds = [...prev, round];
-      saveData(updatedRounds, courses, token);
-      return updatedRounds;
+      const updated = [...prev, round];
+      saveRounds(updated, token);
+      return updated;
     });
-  }, [courses, token]);
+  }, [token]);
 
   const handleDeleteRound = useCallback((id) => {
-    const updatedRounds = rounds.filter(r => r.id !== id);
-    setRounds(updatedRounds);
-    saveData(updatedRounds, courses, token);
-  }, [rounds, courses, token]);
+    const updated = rounds.filter(r => r.id !== id);
+    setRounds(updated);
+    saveRounds(updated, token);
+  }, [rounds, token]);
 
   const handleEditRound = useCallback((round) => {
     setEditingRound(round);
@@ -1309,26 +1423,27 @@ export default function GolfTracker() {
 
   const handleUpdateRound = useCallback((round) => {
     setRounds(prev => {
-      const updatedRounds = prev.map(r => r.id === round.id ? round : r);
-      saveData(updatedRounds, courses, token);
-      return updatedRounds;
+      const updated = prev.map(r => r.id === round.id ? round : r);
+      saveRounds(updated, token);
+      return updated;
     });
     setEditingRound(null);
-  }, [courses, token]);
+  }, [token]);
 
-  const handleSaveCourse = useCallback((course, editingId) => {
-    const updatedCourses = editingId
-      ? courses.map(c => c.id === editingId ? { ...course, id: editingId } : c)
-      : [...courses, { ...course, id: Date.now() }];
-    setCourses(updatedCourses);
-    saveData(rounds, updatedCourses, token);
-  }, [rounds, courses, token]);
+  const handleSaveCourse = useCallback(async (course, editingId) => {
+    if (editingId) {
+      const updated = await updateCourse({ ...course, id: editingId }, token);
+      setCourses(prev => prev.map(c => c.id === editingId ? updated : c));
+    } else {
+      const created = await createCourse(course, token);
+      setCourses(prev => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+    }
+  }, [token]);
 
-  const handleDeleteCourse = useCallback((id) => {
-    const updatedCourses = courses.filter(c => c.id !== id);
-    setCourses(updatedCourses);
-    saveData(rounds, updatedCourses, token);
-  }, [rounds, courses, token]);
+  const handleDeleteCourse = useCallback(async (id) => {
+    await deleteCourse(id, token);
+    setCourses(prev => prev.filter(c => c.id !== id));
+  }, [token]);
 
   const tabs = [
     { id: "dashboard", label: "Dashboard" },
@@ -1368,9 +1483,7 @@ export default function GolfTracker() {
               color: tab === t.id ? C.accent : C.muted,
               borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 600,
               cursor: "pointer", fontFamily: "inherit",
-            }}>
-              {t.label}
-            </button>
+            }}>{t.label}</button>
           ))}
           {session ? (
             <button onClick={() => supabase.auth.signOut()} style={{
@@ -1407,7 +1520,7 @@ export default function GolfTracker() {
             {tab === "dashboard" && <Dashboard rounds={rounds} />}
             {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
-            {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} />}
+            {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
           </>
         )}
       </div>

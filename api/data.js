@@ -40,14 +40,14 @@ export default async function handler(req, res) {
     });
   }
 
-  // ── POST: save this user's rounds + courses ───────────────────────────────
+  // ── POST: save this user's rounds ────────────────────────────────────────
   if (req.method === "POST") {
-    const { rounds, courses } = req.body;
+    const { rounds } = req.body;
 
     const { error } = await supabase
       .from("golf_data")
       .upsert(
-        { user_id: userId, rounds, courses, updated_at: new Date().toISOString() },
+        { user_id: userId, rounds, updated_at: new Date().toISOString() },
         { onConflict: "user_id" }
       );
 
