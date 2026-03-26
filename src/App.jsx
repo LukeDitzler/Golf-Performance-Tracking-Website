@@ -1250,7 +1250,7 @@ function History({ rounds, onDelete, onEdit }) {
 
 // ── APP ROOT ─────────────────────────────────────────────────────────────────
 export default function GolfTracker() {
-  const [tab, setTab] = useState("log");
+  const [tab, setTab] = useState("dashboard");
   const [rounds, setRounds] = useState([]);
   const [courses, setCourses] = useState([]);
   const [loaded, setLoaded] = useState(false);
