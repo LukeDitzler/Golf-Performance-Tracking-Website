@@ -807,6 +807,106 @@ function Dashboard({ rounds, courses }) {
   );
 }
 
+// ── SETTINGS MODAL ───────────────────────────────────────────────────────────
+function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
+  const existing = profiles.find(p => p.id === userId) || {};
+  const [firstName, setFirstName] = useState(existing.first_name || "");
+  const [lastName, setLastName] = useState(existing.last_name || "");
+  const [age, setAge] = useState(existing.age ?? "");
+  const [handicap, setHandicap] = useState(existing.handicap ?? "");
+  const [homeState, setHomeState] = useState(existing.home_state || "");
+  const [handedness, setHandedness] = useState(existing.handedness || "");
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState("");
+
+  const handleSave = async () => {
+    if (!firstName.trim() || !lastName.trim()) { setError("First and last name are required."); return; }
+    setSaving(true); setError("");
+    await saveProfile({
+      first_name: firstName.trim(),
+      last_name: lastName.trim(),
+      age: age !== "" ? +age : null,
+      handicap: handicap !== "" ? +handicap : null,
+      home_state: homeState || null,
+      handedness: handedness || null,
+    }, token);
+    await loadProfiles().then(onProfileUpdated);
+    setSaving(false); setSaved(true);
+    setTimeout(() => { setSaved(false); onClose(); }, 1000);
+  };
+
+  const inp = { ...inputStyle, padding: "8px 12px", fontSize: 13 };
+  const half = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
+      onClick={onClose}>
+      <div style={{ background: C.surface, borderRadius: 20, padding: 32, width: "100%", maxWidth: 420, boxShadow: "0 24px 64px rgba(0,0,0,0.2)" }}
+        onClick={e => e.stopPropagation()}>
+
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div style={{ fontSize: 18, fontWeight: 700, color: C.text }}>Profile Settings</div>
+          <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 20, padding: 0, lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 22 }}>Update your profile info and leaderboard details.</div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <div style={half}>
+            <div>
+              <label style={labelStyle}>First Name *</label>
+              <input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Luke" style={inp} />
+            </div>
+            <div>
+              <label style={labelStyle}>Last Name *</label>
+              <input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Ditzler" style={inp} />
+            </div>
+          </div>
+
+          <div style={half}>
+            <div>
+              <label style={labelStyle}>Age</label>
+              <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} placeholder="30" style={inp} />
+            </div>
+            <div>
+              <label style={labelStyle}>GHIN Handicap</label>
+              <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} placeholder="12.4" style={inp} />
+            </div>
+          </div>
+
+          <div style={half}>
+            <div>
+              <label style={labelStyle}>Home State</label>
+              <select value={homeState} onChange={e => setHomeState(e.target.value)} style={{ ...inp, background: C.bg }}>
+                <option value="">— Select —</option>
+                {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Handedness</label>
+              <select value={handedness} onChange={e => setHandedness(e.target.value)} style={{ ...inp, background: C.bg }}>
+                <option value="">— Select —</option>
+                <option value="right">Right</option>
+                <option value="left">Left</option>
+              </select>
+            </div>
+          </div>
+
+          {error && <div style={{ fontSize: 13, color: C.red, background: "#fdf0ef", borderRadius: 8, padding: "8px 12px" }}>{error}</div>}
+
+          <button onClick={handleSave} disabled={saving} style={{
+            background: saved ? C.accentMid : C.accent, color: "#fff", border: "none",
+            borderRadius: 10, padding: "11px 0", fontSize: 14, fontWeight: 700,
+            cursor: "pointer", opacity: saving ? 0.7 : 1, transition: "all 0.2s", fontFamily: "inherit",
+          }}>
+            {saved ? "✓ Saved" : saving ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 function Leaderboard({ rounds, courses, profiles, userId }) {
   const [timeFilter, setTimeFilter] = useState("all");
@@ -1716,6 +1816,7 @@ export default function GolfTracker() {
   const [editingRound, setEditingRound] = useState(null);
   const [session, setSession] = useState(null);
   const [showAuth, setShowAuth] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
 
   // ── Listen for auth state changes ──────────────────────────────────────────
   useEffect(() => {
@@ -1813,6 +1914,15 @@ export default function GolfTracker() {
       `}</style>
 
       {showAuth && <AuthModal onClose={() => setShowAuth(false)} />}
+      {showSettings && (
+        <SettingsModal
+          onClose={() => setShowSettings(false)}
+          userId={userId}
+          token={token}
+          profiles={profiles}
+          onProfileUpdated={setProfiles}
+        />
+      )}
 
       {/* Header */}
       <div className="fairway-nav" style={{ borderBottom: `1px solid ${C.border}`, padding: "16px 3vw", display: "flex", alignItems: "center", justifyContent: "space-between", background: C.surface }}>
@@ -1832,11 +1942,18 @@ export default function GolfTracker() {
             }}>{t.label}</button>
           ))}
           {session ? (
-            <button onClick={() => supabase.auth.signOut()} style={{
-              background: "transparent", border: `1px solid ${C.border}`,
-              color: C.muted, borderRadius: 8, padding: "6px 14px",
-              fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
-            }}>Log Out</button>
+            <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={() => setShowSettings(true)} title="Profile settings" style={{
+                background: "transparent", border: `1px solid ${C.border}`,
+                color: C.muted, borderRadius: 8, padding: "6px 10px",
+                fontSize: 15, cursor: "pointer", lineHeight: 1, display: "flex", alignItems: "center",
+              }}>⚙️</button>
+              <button onClick={() => supabase.auth.signOut()} style={{
+                background: "transparent", border: `1px solid ${C.border}`,
+                color: C.muted, borderRadius: 8, padding: "6px 14px",
+                fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              }}>Log Out</button>
+            </div>
           ) : (
             <button onClick={() => setShowAuth(true)} style={{
               background: C.accent, color: "#fff", border: "none",
