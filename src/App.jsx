@@ -270,22 +270,22 @@ function AuthModal({ onClose, onProfileSaved }) {
             <div style={half}>
               <div>
                 <label style={labelStyle}>First Name *</label>
-                <input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Luke" style={inp} />
+                <input value={firstName} onChange={e => setFirstName(e.target.value)} style={inp} />
               </div>
               <div>
                 <label style={labelStyle}>Last Name *</label>
-                <input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Ditzler" style={inp} />
+                <input value={lastName} onChange={e => setLastName(e.target.value)} style={inp} />
               </div>
             </div>
 
             <div style={half}>
               <div>
                 <label style={labelStyle}>Age</label>
-                <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} placeholder="30" style={inp} />
+                <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} style={inp} />
               </div>
               <div>
                 <label style={labelStyle}>GHIN Handicap</label>
-                <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} placeholder="12.4" style={inp} />
+                <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} style={inp} />
               </div>
             </div>
 
@@ -855,22 +855,22 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
           <div style={half}>
             <div>
               <label style={labelStyle}>First Name *</label>
-              <input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Luke" style={inp} />
+              <input value={firstName} onChange={e => setFirstName(e.target.value)} style={inp} />
             </div>
             <div>
               <label style={labelStyle}>Last Name *</label>
-              <input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Ditzler" style={inp} />
+              <input value={lastName} onChange={e => setLastName(e.target.value)} style={inp} />
             </div>
           </div>
 
           <div style={half}>
             <div>
               <label style={labelStyle}>Age</label>
-              <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} placeholder="30" style={inp} />
+              <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} style={inp} />
             </div>
             <div>
               <label style={labelStyle}>GHIN Handicap</label>
-              <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} placeholder="12.4" style={inp} />
+              <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} style={inp} />
             </div>
           </div>
 
@@ -935,11 +935,12 @@ function Leaderboard({ rounds, courses, profiles, userId }) {
 
   const activeFilterCount = [timeFilter !== "all", stateFilter !== "all", courseFilter !== "all"].filter(Boolean).length;
 
-  // Build per-user stats from all-rounds data (passed from root)
-  // rounds here is ALL rounds across ALL users (we'll need that — see note below)
-  // For now, compute from whatever rounds we have
+  // Build per-user stats. Since rounds are private per-user, the only rounds
+  // we have are the current user's own. We attribute them to the logged-in user
+  // and show null stats for everyone else until cross-user rounds are available.
   const userStats = profiles.map(p => {
-    const userRounds = filterRounds(rounds.filter(r => r.userId === p.id));
+    const isCurrentUser = p.id === userId;
+    const userRounds = isCurrentUser ? filterRounds(rounds) : [];
     const holes = userRounds.flatMap(r => r.holes.filter(h => h.score !== ""));
     const totalRounds = userRounds.filter(r => r.holes.some(h => h.score !== "")).length;
     const avgScore = totalRounds > 0 ? holes.reduce((s, h) => s + (+h.score - h.par), 0) / totalRounds : null;
@@ -952,7 +953,7 @@ function Leaderboard({ rounds, courses, profiles, userId }) {
     const udHoles = holes.filter(h => h.upAndDown === true || h.upAndDown === false);
     const udPct = udHoles.length ? Math.round(holes.filter(h => h.upAndDown === true).length / udHoles.length * 100) : null;
     return { ...p, totalRounds, avgScore, girPct, avgPutts, fhPct, udPct };
-  }).filter(p => p.first_name); // only show users with a profile
+  }).filter(p => p.first_name);
 
   const name = (p) => `${p.first_name} ${p.last_name}`;
   const isMe = (p) => p.id === userId;
