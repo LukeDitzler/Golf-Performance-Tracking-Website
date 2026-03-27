@@ -111,6 +111,27 @@ async function deleteCourse(id, token) {
   });
 }
 
+// Profiles — public read, owner write
+const PROFILES_API = "/api/profiles";
+
+async function loadProfiles() {
+  try {
+    const res = await fetch(PROFILES_API);
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch { return []; }
+}
+
+async function saveProfile(profile, token) {
+  try {
+    await fetch(PROFILES_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify(profile),
+    });
+  } catch (err) { console.error("Could not save profile:", err); }
+}
+
 // ── Design tokens ────────────────────────────────────────────────────────────
 const C = {
   bg: "#fafaf8",
@@ -171,13 +192,23 @@ function MiniBar({ pct, color = C.accentMid }) {
 }
 
 // ── AUTH MODAL ───────────────────────────────────────────────────────────────
-function AuthModal({ onClose }) {
-  const [mode, setMode] = useState("login"); // "login" | "signup"
+const US_STATES = ["AL","AK","AZ","AR","CA","CO","CT","DE","FL","GA","HI","ID","IL","IN","IA","KS","KY","LA","ME","MD","MA","MI","MN","MS","MO","MT","NE","NV","NH","NJ","NM","NY","NC","ND","OH","OK","OR","PA","RI","SC","SD","TN","TX","UT","VT","VA","WA","WV","WI","WY"];
+
+function AuthModal({ onClose, onProfileSaved }) {
+  const [mode, setMode] = useState("login");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [age, setAge] = useState("");
+  const [handicap, setHandicap] = useState("");
+  const [homeState, setHomeState] = useState("");
+  const [handedness, setHandedness] = useState("");
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
+
+  const switchMode = (m) => { setMode(m); setError(""); setMessage(""); };
 
   const handleSubmit = async () => {
     setError(""); setMessage(""); setLoading(true);
@@ -186,38 +217,96 @@ function AuthModal({ onClose }) {
       if (error) setError(error.message);
       else onClose();
     } else {
-      const { error } = await supabase.auth.signUp({ email, password });
-      if (error) setError(error.message);
-      else setMessage("Check your email for a confirmation link, then log in.");
+      if (!firstName.trim() || !lastName.trim()) { setError("First and last name are required."); setLoading(false); return; }
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      if (error) { setError(error.message); setLoading(false); return; }
+      // Save profile immediately — will be linked once email is confirmed
+      if (data?.user) {
+        await saveProfile({
+          first_name: firstName.trim(),
+          last_name: lastName.trim(),
+          age: age ? +age : null,
+          handicap: handicap !== "" ? +handicap : null,
+          home_state: homeState || null,
+          handedness: handedness || null,
+        }, data.session?.access_token || "");
+      }
+      setMessage("Check your email for a confirmation link, then log in.");
     }
     setLoading(false);
   };
 
+  const inp = { ...inputStyle, padding: "8px 12px", fontSize: 13 };
+  const half = { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 };
+
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center" }}
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 1000, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }}
       onClick={onClose}>
-      <div style={{ background: C.surface, borderRadius: 20, padding: 36, width: 360, boxShadow: "0 20px 60px rgba(0,0,0,0.15)" }}
+      <div style={{ background: C.surface, borderRadius: 20, padding: 32, width: "100%", maxWidth: 440, maxHeight: "90vh", overflowY: "auto", boxShadow: "0 24px 64px rgba(0,0,0,0.2)" }}
         onClick={e => e.stopPropagation()}>
-        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 6 }}>
-          {mode === "login" ? "Welcome back" : "Create account"}
+        <div style={{ fontSize: 18, fontWeight: 700, color: C.text, marginBottom: 4 }}>
+          {mode === "login" ? "Welcome back" : "Create your account"}
         </div>
-        <div style={{ fontSize: 13, color: C.muted, marginBottom: 24 }}>
-          {mode === "login" ? "Log in to access your rounds." : "Sign up to start tracking your game."}
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 22 }}>
+          {mode === "login" ? "Log in to access your rounds." : "Set up your profile to join the leaderboard."}
         </div>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          {/* Email + Password — always shown */}
           <div>
             <label style={labelStyle}>Email</label>
-            <input type="email" value={email} onChange={e => setEmail(e.target.value)}
-              placeholder="you@example.com" style={inputStyle}
-              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inp} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
           </div>
           <div>
             <label style={labelStyle}>Password</label>
-            <input type="password" value={password} onChange={e => setPassword(e.target.value)}
-              placeholder="••••••••" style={inputStyle}
-              onKeyDown={e => e.key === "Enter" && handleSubmit()} />
+            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" style={inp} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
           </div>
+
+          {/* Signup-only profile fields */}
+          {mode === "signup" && (<>
+            <div style={{ height: 1, background: C.border, margin: "2px 0" }} />
+            <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted }}>Profile Info</div>
+
+            <div style={half}>
+              <div>
+                <label style={labelStyle}>First Name *</label>
+                <input value={firstName} onChange={e => setFirstName(e.target.value)} placeholder="Luke" style={inp} />
+              </div>
+              <div>
+                <label style={labelStyle}>Last Name *</label>
+                <input value={lastName} onChange={e => setLastName(e.target.value)} placeholder="Ditzler" style={inp} />
+              </div>
+            </div>
+
+            <div style={half}>
+              <div>
+                <label style={labelStyle}>Age</label>
+                <input type="number" min={10} max={100} value={age} onChange={e => setAge(e.target.value)} placeholder="30" style={inp} />
+              </div>
+              <div>
+                <label style={labelStyle}>GHIN Handicap</label>
+                <input type="number" step={0.1} min={-10} max={54} value={handicap} onChange={e => setHandicap(e.target.value)} placeholder="12.4" style={inp} />
+              </div>
+            </div>
+
+            <div style={half}>
+              <div>
+                <label style={labelStyle}>Home State</label>
+                <select value={homeState} onChange={e => setHomeState(e.target.value)} style={{ ...inp, background: C.bg }}>
+                  <option value="">— Select —</option>
+                  {US_STATES.map(s => <option key={s} value={s}>{s}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={labelStyle}>Handedness</label>
+                <select value={handedness} onChange={e => setHandedness(e.target.value)} style={{ ...inp, background: C.bg }}>
+                  <option value="">— Select —</option>
+                  <option value="right">Right</option>
+                  <option value="left">Left</option>
+                </select>
+              </div>
+            </div>
+          </>)}
 
           {error && <div style={{ fontSize: 13, color: C.red, background: "#fdf0ef", borderRadius: 8, padding: "8px 12px" }}>{error}</div>}
           {message && <div style={{ fontSize: 13, color: C.accent, background: C.accentLight, borderRadius: 8, padding: "8px 12px" }}>{message}</div>}
@@ -227,18 +316,99 @@ function AuthModal({ onClose }) {
             padding: "11px 0", fontSize: 14, fontWeight: 700, cursor: "pointer",
             opacity: loading ? 0.7 : 1, transition: "opacity 0.15s", fontFamily: "inherit",
           }}>
-            {loading ? "…" : mode === "login" ? "Log In" : "Sign Up"}
+            {loading ? "…" : mode === "login" ? "Log In" : "Create Account"}
           </button>
 
           <div style={{ textAlign: "center", fontSize: 13, color: C.muted }}>
             {mode === "login" ? "Don't have an account? " : "Already have an account? "}
-            <span onClick={() => { setMode(mode === "login" ? "signup" : "login"); setError(""); setMessage(""); }}
+            <span onClick={() => switchMode(mode === "login" ? "signup" : "login")}
               style={{ color: C.accent, fontWeight: 600, cursor: "pointer" }}>
               {mode === "login" ? "Sign up" : "Log in"}
             </span>
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── SHARED FILTER BAR ────────────────────────────────────────────────────────
+function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, courseFilter, setCourseFilter, statesInUse, coursesWithRounds, totalRounds, activeFilterCount, onClear, children }) {
+  const FilterPill = ({ label, active, onClick }) => (
+    <button onClick={onClick} style={{
+      padding: "3px 12px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+      cursor: "pointer", border: `1.5px solid ${active ? C.accent : C.border}`,
+      background: active ? C.accent : "transparent",
+      color: active ? "#fff" : C.muted,
+      transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap",
+    }}>{label}</button>
+  );
+
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "14px 20px", display: "flex", flexDirection: "column", gap: 12 }}>
+      {/* Top row: mode toggle slot + clear */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        {children}
+        {activeFilterCount > 0 && (
+          <button onClick={onClear} style={{
+            fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`,
+            borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit",
+          }}>Clear filters ×</button>
+        )}
+      </div>
+
+      {/* Divider */}
+      <div style={{ height: 1, background: C.border }} />
+
+      {/* Horizontal filter row */}
+      <div style={{ display: "flex", gap: 20, flexWrap: "wrap", alignItems: "flex-start" }}>
+
+        {/* Time */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+          <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, flexShrink: 0 }}>Time</span>
+          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+            {[{ id: "all", label: "All" }, { id: "3m", label: "3 mo" }, { id: "1m", label: "1 mo" }].map(f => (
+              <FilterPill key={f.id} label={f.label} active={timeFilter === f.id} onClick={() => setTimeFilter(f.id)} />
+            ))}
+          </div>
+        </div>
+
+        {/* State */}
+        {statesInUse.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, flexShrink: 0 }}>State</span>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              <FilterPill label="All" active={stateFilter === "all"} onClick={() => { setStateFilter("all"); setCourseFilter("all"); }} />
+              {statesInUse.map(s => (
+                <FilterPill key={s} label={s} active={stateFilter === s} onClick={() => { setStateFilter(s); setCourseFilter("all"); }} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Course */}
+        {coursesWithRounds.length > 0 && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, flexShrink: 0 }}>Course</span>
+            <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
+              <FilterPill label="All" active={courseFilter === "all"} onClick={() => setCourseFilter("all")} />
+              {coursesWithRounds
+                .filter(c => stateFilter === "all" || c.state === stateFilter)
+                .map(c => (
+                  <FilterPill key={c.id} label={c.name} active={courseFilter === c.id} onClick={() => setCourseFilter(c.id)} />
+                ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Summary */}
+      {(totalRounds > 0 || activeFilterCount > 0) && (
+        <div style={{ fontSize: 12, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
+          Showing <span style={{ fontWeight: 700, color: C.text }}>{totalRounds}</span> round{totalRounds !== 1 ? "s" : ""}
+          {activeFilterCount > 0 && " matching active filters"}
+        </div>
+      )}
     </div>
   );
 }
@@ -345,96 +515,30 @@ function Dashboard({ rounds, courses }) {
   const noData = totalHoles === 0;
   const activeFilterCount = [timeFilter !== "all", stateFilter !== "all", courseFilter !== "all"].filter(Boolean).length;
 
-  const FilterPill = ({ label, active, onClick }) => (
-    <button onClick={onClick} style={{
-      padding: "4px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-      cursor: "pointer", border: `1.5px solid ${active ? C.accent : C.border}`,
-      background: active ? C.accent : "transparent",
-      color: active ? "#fff" : C.muted,
-      transition: "all 0.15s", fontFamily: "inherit", whiteSpace: "nowrap",
-    }}>{label}</button>
-  );
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-      {/* ── Mode toggle + filter bar ──────────────────────────────────────── */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 14 }}>
-
-        {/* Basic / Advanced toggle */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-          <div style={{ display: "flex", background: C.bg, borderRadius: 12, padding: 3, gap: 2, border: `1px solid ${C.border}` }}>
-            {["basic", "advanced"].map(m => (
-              <button key={m} onClick={() => setMode(m)} style={{
-                padding: "6px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700,
-                cursor: "pointer", border: "none", fontFamily: "inherit",
-                background: mode === m ? C.accent : "transparent",
-                color: mode === m ? "#fff" : C.muted,
-                transition: "all 0.18s",
-              }}>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
-            ))}
-          </div>
-          {activeFilterCount > 0 && (
-            <button onClick={() => { setTimeFilter("all"); setStateFilter("all"); setCourseFilter("all"); }} style={{
-              fontSize: 12, color: C.muted, background: "none", border: `1px solid ${C.border}`,
-              borderRadius: 8, padding: "4px 10px", cursor: "pointer", fontFamily: "inherit",
-            }}>Clear filters ×</button>
-          )}
+      <FilterBar
+        timeFilter={timeFilter} setTimeFilter={setTimeFilter}
+        stateFilter={stateFilter} setStateFilter={setStateFilter}
+        courseFilter={courseFilter} setCourseFilter={setCourseFilter}
+        statesInUse={statesInUse} coursesWithRounds={coursesWithRounds}
+        totalRounds={totalRounds} activeFilterCount={activeFilterCount}
+        onClear={() => { setTimeFilter("all"); setStateFilter("all"); setCourseFilter("all"); }}
+      >
+        {/* Basic / Advanced toggle lives inside the filter bar's top row */}
+        <div style={{ display: "flex", background: C.bg, borderRadius: 12, padding: 3, gap: 2, border: `1px solid ${C.border}` }}>
+          {["basic", "advanced"].map(m => (
+            <button key={m} onClick={() => setMode(m)} style={{
+              padding: "6px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+              cursor: "pointer", border: "none", fontFamily: "inherit",
+              background: mode === m ? C.accent : "transparent",
+              color: mode === m ? "#fff" : C.muted,
+              transition: "all 0.18s",
+            }}>{m.charAt(0).toUpperCase() + m.slice(1)}</button>
+          ))}
         </div>
-
-        {/* Divider */}
-        <div style={{ height: 1, background: C.border }} />
-
-        {/* Filter rows */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-
-          {/* Time */}
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>Time</span>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-              {[{ id: "all", label: "All time" }, { id: "3m", label: "3 months" }, { id: "1m", label: "1 month" }].map(f => (
-                <FilterPill key={f.id} label={f.label} active={timeFilter === f.id} onClick={() => setTimeFilter(f.id)} />
-              ))}
-            </div>
-          </div>
-
-          {/* State */}
-          {statesInUse.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>State</span>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <FilterPill label="All" active={stateFilter === "all"} onClick={() => { setStateFilter("all"); setCourseFilter("all"); }} />
-                {statesInUse.map(s => (
-                  <FilterPill key={s} label={s} active={stateFilter === s} onClick={() => { setStateFilter(s); setCourseFilter("all"); }} />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Course */}
-          {coursesWithRounds.length > 0 && (
-            <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-              <span style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, width: 48, flexShrink: 0 }}>Course</span>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                <FilterPill label="All" active={courseFilter === "all"} onClick={() => setCourseFilter("all")} />
-                {coursesWithRounds
-                  .filter(c => stateFilter === "all" || c.state === stateFilter)
-                  .map(c => (
-                    <FilterPill key={c.id} label={c.name} active={courseFilter === c.id} onClick={() => setCourseFilter(c.id)} />
-                  ))}
-              </div>
-            </div>
-          )}
-        </div>
-
-        {/* Active filter summary */}
-        {(totalRounds > 0 || activeFilterCount > 0) && (
-          <div style={{ fontSize: 12, color: C.muted, borderTop: `1px solid ${C.border}`, paddingTop: 10 }}>
-            Showing <span style={{ fontWeight: 700, color: C.text }}>{totalRounds}</span> round{totalRounds !== 1 ? "s" : ""}
-            {activeFilterCount > 0 && " matching active filters"}
-          </div>
-        )}
-      </div>
+      </FilterBar>
 
       {/* ── Advanced placeholder ──────────────────────────────────────────── */}
       {mode === "advanced" && (
@@ -699,6 +803,138 @@ function Dashboard({ rounds, courses }) {
         </div>
       )}
       </>))}
+    </div>
+  );
+}
+
+// ── LEADERBOARD ───────────────────────────────────────────────────────────────
+function Leaderboard({ rounds, courses, profiles, userId }) {
+  const [timeFilter, setTimeFilter] = useState("all");
+  const [stateFilter, setStateFilter] = useState("all");
+  const [courseFilter, setCourseFilter] = useState("all");
+
+  // Build filter metadata from all rounds across all users
+  const roundsWithCourses = rounds.map(r => ({ ...r, courseObj: courses.find(c => c.id === r.courseId) }));
+  const statesInUse = [...new Set(roundsWithCourses.map(r => r.courseObj?.state).filter(Boolean))].sort();
+  const coursesWithRounds = [...new Map(
+    roundsWithCourses.filter(r => r.courseObj).map(r => [r.courseObj.id, r.courseObj])
+  ).values()].sort((a, b) => a.name.localeCompare(b.name));
+
+  const now = new Date();
+  const filterRounds = (userRounds) => userRounds.filter(r => {
+    const rc = courses.find(c => c.id === r.courseId);
+    if (timeFilter !== "all") {
+      const months = timeFilter === "1m" ? 1 : 3;
+      const cutoff = new Date(now.getFullYear(), now.getMonth() - months, now.getDate());
+      if (new Date(r.date) < cutoff) return false;
+    }
+    if (stateFilter !== "all" && rc?.state !== stateFilter) return false;
+    if (courseFilter !== "all" && r.courseId !== courseFilter) return false;
+    return true;
+  });
+
+  const activeFilterCount = [timeFilter !== "all", stateFilter !== "all", courseFilter !== "all"].filter(Boolean).length;
+
+  // Build per-user stats from all-rounds data (passed from root)
+  // rounds here is ALL rounds across ALL users (we'll need that — see note below)
+  // For now, compute from whatever rounds we have
+  const userStats = profiles.map(p => {
+    const userRounds = filterRounds(rounds.filter(r => r.userId === p.id));
+    const holes = userRounds.flatMap(r => r.holes.filter(h => h.score !== ""));
+    const totalRounds = userRounds.filter(r => r.holes.some(h => h.score !== "")).length;
+    const avgScore = totalRounds > 0 ? holes.reduce((s, h) => s + (+h.score - h.par), 0) / totalRounds : null;
+    const girHoles = holes.filter(h => h.gir === true);
+    const girPct = holes.length ? Math.round(girHoles.length / holes.length * 100) : null;
+    const puttHoles = holes.filter(h => h.putts !== "");
+    const avgPutts = puttHoles.length ? +(puttHoles.reduce((s, h) => s + +h.putts, 0) / puttHoles.length).toFixed(2) : null;
+    const fhHoles = holes.filter(h => h.par > 3 && h.fh !== null);
+    const fhPct = fhHoles.length ? Math.round(fhHoles.filter(h => h.fh === true).length / fhHoles.length * 100) : null;
+    const udHoles = holes.filter(h => h.upAndDown === true || h.upAndDown === false);
+    const udPct = udHoles.length ? Math.round(holes.filter(h => h.upAndDown === true).length / udHoles.length * 100) : null;
+    return { ...p, totalRounds, avgScore, girPct, avgPutts, fhPct, udPct };
+  }).filter(p => p.first_name); // only show users with a profile
+
+  const name = (p) => `${p.first_name} ${p.last_name}`;
+  const isMe = (p) => p.id === userId;
+
+  const RankWidget = ({ title, players, valueKey, format, ascending = true, suffix = "" }) => {
+    const sorted = [...players]
+      .filter(p => p[valueKey] !== null && p[valueKey] !== undefined)
+      .sort((a, b) => ascending ? a[valueKey] - b[valueKey] : b[valueKey] - a[valueKey]);
+    const unsorted = players.filter(p => p[valueKey] === null || p[valueKey] === undefined);
+
+    return (
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24, display: "flex", flexDirection: "column", gap: 0 }}>
+        <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>{title}</div>
+        {sorted.length === 0 && (
+          <div style={{ fontSize: 13, color: C.muted, textAlign: "center", padding: "20px 0" }}>No data yet</div>
+        )}
+        {sorted.map((p, i) => {
+          const me = isMe(p);
+          const val = format ? format(p[valueKey]) : `${p[valueKey]}${suffix}`;
+          const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : null;
+          return (
+            <div key={p.id} style={{
+              display: "flex", alignItems: "center", gap: 12, padding: "10px 0",
+              borderBottom: i < sorted.length - 1 ? `1px solid ${C.border}` : "none",
+              background: me ? C.accentLight : "transparent",
+              margin: me ? "2px -8px" : "0",
+              padding: me ? "10px 8px" : "10px 0",
+              borderRadius: me ? 8 : 0,
+            }}>
+              <div style={{ width: 24, textAlign: "center", fontSize: 14 }}>
+                {medal || <span style={{ fontSize: 12, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{i + 1}</span>}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 14, fontWeight: me ? 700 : 500, color: me ? C.accent : C.text }}>
+                  {name(p)}{me && <span style={{ fontSize: 11, color: C.accentMid, marginLeft: 6 }}>you</span>}
+                </div>
+                {p.home_state && <div style={{ fontSize: 11, color: C.muted }}>{p.home_state}</div>}
+              </div>
+              <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, fontSize: 15, color: me ? C.accent : C.text }}>{val}</div>
+              {title === "Handicap" && <div style={{ fontSize: 11, color: C.muted }}>{p.totalRounds} rds</div>}
+            </div>
+          );
+        })}
+        {unsorted.length > 0 && sorted.length > 0 && (
+          <div style={{ fontSize: 11, color: C.muted, paddingTop: 8, borderTop: `1px solid ${C.border}`, marginTop: 4 }}>
+            {unsorted.map(p => name(p)).join(", ")} — no data
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      <FilterBar
+        timeFilter={timeFilter} setTimeFilter={setTimeFilter}
+        stateFilter={stateFilter} setStateFilter={setStateFilter}
+        courseFilter={courseFilter} setCourseFilter={setCourseFilter}
+        statesInUse={statesInUse} coursesWithRounds={coursesWithRounds}
+        totalRounds={null} activeFilterCount={activeFilterCount}
+        onClear={() => { setTimeFilter("all"); setStateFilter("all"); setCourseFilter("all"); }}
+      >
+        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Leaderboard</div>
+      </FilterBar>
+
+      {profiles.length === 0 ? (
+        <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+          <div style={{ fontSize: 36 }}>🏆</div>
+          <div style={{ marginTop: 10, fontSize: 15 }}>No players yet. Be the first to sign up.</div>
+        </div>
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+          <RankWidget title="Handicap" players={userStats} valueKey="handicap" ascending={true}
+            format={v => v % 1 === 0 ? `${v}.0` : `${v}`} />
+          <RankWidget title="Avg Score vs Par" players={userStats} valueKey="avgScore" ascending={true}
+            format={v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)} />
+          <RankWidget title="GIR %" players={userStats} valueKey="girPct" ascending={false} suffix="%" />
+          <RankWidget title="Avg Putts / Hole" players={userStats} valueKey="avgPutts" ascending={true} />
+          <RankWidget title="FW Hit %" players={userStats} valueKey="fhPct" ascending={false} suffix="%" />
+          <RankWidget title="Up & Down %" players={userStats} valueKey="udPct" ascending={false} suffix="%" />
+        </div>
+      )}
     </div>
   );
 }
@@ -1475,6 +1711,7 @@ export default function GolfTracker() {
   const [tab, setTab] = useState("dashboard");
   const [rounds, setRounds] = useState([]);
   const [courses, setCourses] = useState([]);
+  const [profiles, setProfiles] = useState([]);
   const [loaded, setLoaded] = useState(false);
   const [editingRound, setEditingRound] = useState(null);
   const [session, setSession] = useState(null);
@@ -1490,9 +1727,10 @@ export default function GolfTracker() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // ── Load shared courses once on mount ──────────────────────────────────────
+  // ── Load shared courses and profiles once on mount ────────────────────────
   useEffect(() => {
     loadCourses().then(setCourses);
+    loadProfiles().then(setProfiles);
   }, []);
 
   // ── Load user's rounds when session is available ───────────────────────────
@@ -1553,6 +1791,7 @@ export default function GolfTracker() {
 
   const tabs = [
     { id: "dashboard", label: "Dashboard" },
+    { id: "leaderboard", label: "Leaderboard" },
     { id: "log", label: "Log Round" },
     { id: "history", label: "History" },
     { id: "courses", label: "Courses" },
@@ -1582,7 +1821,8 @@ export default function GolfTracker() {
           <span style={{ fontSize: 13, color: C.muted, fontFamily: "'DM Mono', monospace" }}>powered by BGM</span>
         </div>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
-          {session && tabs.map(t => (
+          {/* Leaderboard always visible; rest only when logged in */}
+          {tabs.filter(t => session || t.id === "leaderboard").map(t => (
             <button key={t.id} onClick={() => { setTab(t.id); if (t.id !== "log") setEditingRound(null); }} style={{
               background: tab === t.id ? C.accentLight : "transparent",
               border: `1px solid ${tab === t.id ? C.accentMid : "transparent"}`,
@@ -1609,7 +1849,10 @@ export default function GolfTracker() {
 
       {/* Content */}
       <div style={{ width: "94vw", margin: "0 auto", padding: "32px 0" }}>
-        {!session ? (
+        {/* Leaderboard is public — visible without login */}
+        {tab === "leaderboard" && <Leaderboard rounds={rounds} courses={courses} profiles={profiles} userId={userId} />}
+
+        {!session && tab !== "leaderboard" ? (
           <div style={{ textAlign: "center", padding: "100px 0", color: C.muted }}>
             <div style={{ fontSize: 52 }}>⛳</div>
             <div style={{ marginTop: 16, fontSize: 20, fontWeight: 700, color: C.text }}>Fairway Caddie</div>
@@ -1619,16 +1862,16 @@ export default function GolfTracker() {
               padding: "12px 28px", fontSize: 15, fontWeight: 700, cursor: "pointer", fontFamily: "inherit",
             }}>Get Started</button>
           </div>
-        ) : !loaded ? (
+        ) : !loaded && session && tab !== "leaderboard" ? (
           <div style={{ padding: 40, color: C.muted }}>Loading…</div>
-        ) : (
+        ) : session && tab !== "leaderboard" ? (
           <>
             {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} />}
             {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
           </>
-        )}
+        ) : null}
       </div>
     </div>
   );
