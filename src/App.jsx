@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { createClient } from "@supabase/supabase-js";
+import { calcRoundSG } from "./sg_calculator.js";
 
 // ── Supabase auth client (uses public anon key — safe for browser) ────────────
 const supabase = createClient(
@@ -24,6 +25,8 @@ const defaultHoles = (courseHoles) =>
     putts: "",
     upAndDown: null,
     penalty: 0,
+    distToPin: "",     // yards remaining after approach shot → enables precise SG: Approach & Putting
+    teeDistToPin: "",  // yards remaining after tee shot → enables precise SG: Off-the-Tee
   }));
 
 const defaultRound = (course) => ({
@@ -414,7 +417,7 @@ function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, cou
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ rounds, courses }) {
+function Dashboard({ rounds, courses, benchmarkHcp = 15 }) {
   const [mode, setMode] = useState("basic");
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
@@ -540,16 +543,139 @@ function Dashboard({ rounds, courses }) {
         </div>
       </FilterBar>
 
-      {/* ── Advanced placeholder ──────────────────────────────────────────── */}
-      {mode === "advanced" && (
-        <div style={{ background: C.surface, border: `1.5px dashed ${C.border}`, borderRadius: 16, padding: "60px 40px", textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📐</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>Advanced Analytics</div>
-          <div style={{ fontSize: 14, color: C.muted, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
-            Strokes Gained and other advanced stats are coming here. This workspace is reserved for deeper analysis that requires additional data entry per round.
+      {/* ── Advanced: Strokes Gained ──────────────────────────────────────── */}
+      {mode === "advanced" && (() => {
+        const completedRounds = filteredRounds.filter(r => r.holes.some(h => h.score !== ""));
+        if (completedRounds.length === 0) return (
+          <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+            <div style={{ fontSize: 36 }}>📐</div>
+            <div style={{ marginTop: 10, fontSize: 15 }}>No rounds match the active filters.</div>
           </div>
-        </div>
-      )}
+        );
+
+        // Aggregate SG across filtered rounds
+        const sgRounds = completedRounds.map(r => calcRoundSG(r, benchmarkHcp));
+        const n = sgRounds.length;
+        const avgSG = cat => +(sgRounds.reduce((s, r) => s + r[cat], 0) / n).toFixed(2);
+        const sg = {
+          offTee:      avgSG("offTee"),
+          approach:    avgSG("approach"),
+          aroundGreen: avgSG("aroundGreen"),
+          putting:     avgSG("putting"),
+          total:       avgSG("total"),
+        };
+
+        const sgColor = v => v >= 0.3 ? C.accentMid : v >= 0 ? C.accent : v >= -0.5 ? C.yellow : C.red;
+        const fmtSG = v => (v >= 0 ? "+" : "") + v.toFixed(2);
+        const maxAbs = Math.max(0.01, Math.abs(sg.offTee), Math.abs(sg.approach), Math.abs(sg.aroundGreen), Math.abs(sg.putting));
+
+        const hasPrecise = completedRounds.some(r => r.holes.some(h => h.distToPin !== "" && h.distToPin !== undefined));
+
+        return (
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+
+            {/* Benchmark label */}
+            <div style={{ fontSize: 12, color: C.muted, display: "flex", alignItems: "center", gap: 6 }}>
+              <span>Benchmark: </span>
+              <span style={{ fontWeight: 700, color: C.text }}>
+                {benchmarkHcp === 0 ? "PGA Tour" : `${benchmarkHcp} handicap`}
+              </span>
+              <span>· {n} round{n !== 1 ? "s" : ""}</span>
+              {!hasPrecise && (
+                <span style={{ marginLeft: 8, background: C.accentLight, color: C.accent, borderRadius: 6, padding: "2px 8px", fontSize: 11, fontWeight: 600 }}>
+                  Estimated — add Dist to Pin for precision
+                </span>
+              )}
+            </div>
+
+            {/* Total SG hero card */}
+            <div style={{ background: sg.total >= 0 ? C.accent : C.red, borderRadius: 16, padding: "20px 24px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div>
+                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)" }}>Total SG / round</div>
+                <div style={{ fontSize: 36, fontWeight: 700, color: "#fff", fontFamily: "'DM Mono', monospace", marginTop: 4 }}>{fmtSG(sg.total)}</div>
+              </div>
+              <div style={{ fontSize: 13, color: "rgba(255,255,255,0.75)", textAlign: "right", lineHeight: 1.8 }}>
+                vs {benchmarkHcp === 0 ? "PGA Tour" : `${benchmarkHcp}-hcp`}<br />
+                avg per round
+              </div>
+            </div>
+
+            {/* Category breakdown */}
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 20 }}>SG by category</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+                {[
+                  { label: "Off the Tee",    key: "offTee",      note: "Par 4s & 5s only" },
+                  { label: "Approach",       key: "approach",    note: hasPrecise ? "From dist to pin" : "From GIR result" },
+                  { label: "Around Green",   key: "aroundGreen", note: "Up & down on missed GIR" },
+                  { label: "Putting",        key: "putting",     note: hasPrecise ? "From dist to pin" : "Est. from putt count" },
+                ].map(({ label, key, note }) => {
+                  const val = sg[key];
+                  const barPct = Math.min(100, (Math.abs(val) / maxAbs) * 50 + 50);
+                  const isPos = val >= 0;
+                  return (
+                    <div key={key}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 6 }}>
+                        <div>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: C.text }}>{label}</span>
+                          <span style={{ fontSize: 11, color: C.muted, marginLeft: 8 }}>{note}</span>
+                        </div>
+                        <span style={{ fontSize: 18, fontWeight: 700, fontFamily: "'DM Mono', monospace", color: sgColor(val) }}>
+                          {fmtSG(val)}
+                        </span>
+                      </div>
+                      {/* Centered bar: left = negative, right = positive */}
+                      <div style={{ position: "relative", height: 8, borderRadius: 4, background: C.border }}>
+                        <div style={{ position: "absolute", left: "50%", width: 1, height: "100%", background: C.muted, opacity: 0.4 }} />
+                        <div style={{
+                          position: "absolute",
+                          height: "100%",
+                          borderRadius: 4,
+                          background: sgColor(val),
+                          left: isPos ? "50%" : `${50 - (Math.abs(val) / maxAbs) * 48}%`,
+                          width: `${(Math.abs(val) / maxAbs) * 48}%`,
+                          minWidth: 2,
+                          transition: "width 0.4s ease",
+                        }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Per-round SG trend */}
+            {n > 1 && (() => {
+              const recent = completedRounds.slice(-8).map((r, i) => {
+                const s = calcRoundSG(r, benchmarkHcp);
+                return { label: r.date?.slice(5) || `R${i + 1}`, total: s.total };
+              });
+              const minV = Math.min(...recent.map(r => r.total));
+              const maxV = Math.max(...recent.map(r => r.total));
+              const range = Math.max(0.5, maxV - minV);
+              return (
+                <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>SG trend (last {recent.length} rounds)</div>
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 6, height: 80 }}>
+                    {recent.map(({ label, total }, i) => {
+                      const pct = ((total - minV) / range) * 100;
+                      const col = sgColor(total);
+                      return (
+                        <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+                          <div style={{ fontSize: 10, fontFamily: "'DM Mono', monospace", color: col, fontWeight: 700 }}>{fmtSG(total)}</div>
+                          <div style={{ width: "100%", height: `${Math.max(8, pct * 0.6 + 10)}px`, background: col, borderRadius: 3, opacity: 0.85 }} />
+                          <div style={{ fontSize: 9, color: C.muted }}>{label}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })()}
+
+          </div>
+        );
+      })()}
 
       {/* ── Basic stats (hidden in advanced mode) ────────────────────────── */}
       {mode === "basic" && (noData ? (
@@ -809,7 +935,7 @@ function Dashboard({ rounds, courses }) {
 
 // ── SETTINGS MODAL ───────────────────────────────────────────────────────────
 function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
-  const existing = profiles.find(p => p.id === userId) || {};
+  const existing = profiles.find(p => p.user_id === userId) || {};
   const [firstName, setFirstName] = useState(existing.first_name || "");
   const [lastName, setLastName] = useState(existing.last_name || "");
   const [age, setAge] = useState(existing.age ?? "");
@@ -1848,6 +1974,10 @@ export default function GolfTracker() {
   const token = session?.access_token;
   const userId = session?.user?.id;
 
+  // Derive the logged-in user's handicap from their profile for SG benchmark
+  const myProfile = profiles.find(p => p.user_id === userId);
+  const myHandicap = myProfile?.handicap != null ? +myProfile.handicap : 15;
+
   const handleSaveRound = useCallback((round) => {
     setRounds(prev => {
       const updated = [...prev, round];
@@ -1984,7 +2114,7 @@ export default function GolfTracker() {
           <div style={{ padding: 40, color: C.muted }}>Loading…</div>
         ) : session && tab !== "leaderboard" ? (
           <>
-            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} />}
+            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} benchmarkHcp={myHandicap} />}
             {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
