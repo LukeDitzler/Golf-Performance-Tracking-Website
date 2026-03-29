@@ -1975,7 +1975,7 @@ export default function GolfTracker() {
   const userId = session?.user?.id;
 
   // Derive the logged-in user's handicap from their profile for SG benchmark
-  const myProfile = profiles.find(p => p.user_id === userId);
+  const myProfile = profiles.find(p => p.user_id === userId || p.id === userId);
   const myHandicap = myProfile?.handicap != null ? +myProfile.handicap : 15;
 
   const handleSaveRound = useCallback((round) => {
