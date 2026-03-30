@@ -486,7 +486,9 @@ function Dashboard({ rounds, courses }) {
     const hs = r.holes.filter(h => h.score !== "");
     if (!hs.length) return null;
     const rel = hs.reduce((s, h) => s + (+h.score - h.par), 0);
-    return { course: r.course || r.courseObj?.name || "Unnamed", date: r.date, rel };
+    const total = hs.reduce((s, h) => s + +h.score, 0);
+    const par = hs.reduce((s, h) => s + h.par, 0);
+    return { course: r.course || r.courseObj?.name || "Unnamed", date: r.date, rel, total, par };
   }).filter(Boolean).slice(-8);
 
   const birdieOrBetter = allHoles.filter(h => +h.score <= h.par - 1).length;
@@ -566,127 +568,301 @@ function Dashboard({ rounds, courses }) {
         <StatCard label="Up & Down %" value={udHoles.length ? `${udPct}%` : "—"} sub={udHoles.length ? `${udHit}/${udHoles.length}` : "no data"} />
       </div>
 
-      {/* ── Fairway + Scoring side-by-side ───────────────────────────────── */}
-      <div style={{ display: "grid", gridTemplateColumns: fhHoles.length > 0 ? "1fr 1fr" : "1fr", gap: 12, alignItems: "stretch" }}>
+      {/* ── Fairway (40%) + Scoring (40%) + Recent Rounds (20%) ─────────── */}
+      {(() => {
+        // Fairway data
+        const total = fhHoles.length;
+        const leftPct  = total ? Math.round(fhLeft / total * 100) : 0;
+        const hitPct   = total ? Math.round(fhHit  / total * 100) : 0;
+        const rightPct = total ? Math.round(fhRight / total * 100) : 0;
 
-        {/* Fairway Distribution — half-donut left, legend right */}
-        {fhHoles.length > 0 && (() => {
-          const total = fhHoles.length;
-          const leftPct  = total ? Math.round(fhLeft / total * 100) : 0;
-          const hitPct   = total ? Math.round(fhHit  / total * 100) : 0;
-          const rightPct = total ? Math.round(fhRight / total * 100) : 0;
-          const W = 160, H = 90, cx = W / 2, cy = H, r = 76, ri = 48;
-          const toRad = d => (d - 90) * Math.PI / 180;
-          const arc = (s0, s1, ro, ri2) => {
-            const s = toRad(s0), e = toRad(s1);
-            const x1 = cx + ro * Math.cos(s), y1 = cy + ro * Math.sin(s);
-            const x2 = cx + ro * Math.cos(e), y2 = cy + ro * Math.sin(e);
-            const x3 = cx + ri2 * Math.cos(e), y3 = cy + ri2 * Math.sin(e);
-            const x4 = cx + ri2 * Math.cos(s), y4 = cy + ri2 * Math.sin(s);
-            return `M${x1},${y1} A${ro},${ro} 0 0 1 ${x2},${y2} L${x3},${y3} A${ri2},${ri2} 0 0 0 ${x4},${y4} Z`;
-          };
-          const g = 1.5;
-          const a0 = -90, a1 = a0 + leftPct * 1.8, a2 = a1 + hitPct * 1.8, a3 = a2 + rightPct * 1.8;
-          return (
-            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Fairway Distribution</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1 }}>
-                <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} style={{ overflow: "visible", flexShrink: 0 }}>
-                  <path d={arc(-90, 90, r, ri)} fill={C.border} />
-                  {leftPct  > 0.5 && <path d={arc(a0 + g/2, a1 - g/2, r, ri)} fill={C.yellow} />}
-                  {hitPct   > 0.5 && <path d={arc(a1 + g/2, a2 - g/2, r, ri)} fill={C.accentMid} />}
-                  {rightPct > 0.5 && <path d={arc(a2 + g/2, a3 - g/2, r, ri)} fill={C.yellow} />}
-                </svg>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
-                  {[
-                    { label: "Left miss",   pct: leftPct,  color: C.yellow },
-                    { label: "Hit fairway", pct: hitPct,   color: C.accentMid },
-                    { label: "Right miss",  pct: rightPct, color: C.yellow },
-                  ].map(({ label, pct, color }) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
-                      <span style={{ fontSize: 18, fontWeight: 700, color: label === "Hit fairway" ? C.accent : C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
-                    </div>
-                  ))}
+        // Fairway half-donut arc helper
+        const FW = 140, FH = 80, fcx = FW / 2, fcy = FH, fr = 68, fri = 42;
+        const toRad = d => (d - 90) * Math.PI / 180;
+        const halfArc = (s0, s1, ro, ri) => {
+          const s = toRad(s0), e = toRad(s1);
+          const x1 = fcx + ro * Math.cos(s), y1 = fcy + ro * Math.sin(s);
+          const x2 = fcx + ro * Math.cos(e), y2 = fcy + ro * Math.sin(e);
+          const x3 = fcx + ri * Math.cos(e), y3 = fcy + ri * Math.sin(e);
+          const x4 = fcx + ri * Math.cos(s), y4 = fcy + ri * Math.sin(s);
+          return `M${x1},${y1} A${ro},${ro} 0 0 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 0 0 ${x4},${y4} Z`;
+        };
+        const g = 1.5;
+        const fa0 = -90, fa1 = fa0 + leftPct * 1.8, fa2 = fa1 + hitPct * 1.8, fa3 = fa2 + rightPct * 1.8;
+
+        // Scoring donut data
+        const scoringData = [
+          { label: "Birdie+",  count: birdieOrBetter, color: C.accentMid },
+          { label: "Par",      count: pars,            color: C.accent },
+          { label: "Bogey",    count: bogeys,          color: C.yellow },
+          { label: "Double+",  count: doubles,         color: C.red },
+        ];
+        const parOrBetterPct = totalHoles ? Math.round((birdieOrBetter + pars) / totalHoles * 100) : 0;
+        const DS = 130, dcx = DS / 2, dcy = DS / 2, dr = 57, dri = 37;
+        const fullArc = (s0, s1, ro, ri) => {
+          const s = toRad(s0), e = toRad(s1);
+          const x1 = dcx + ro * Math.cos(s), y1 = dcy + ro * Math.sin(s);
+          const x2 = dcx + ro * Math.cos(e), y2 = dcy + ro * Math.sin(e);
+          const x3 = dcx + ri * Math.cos(e), y3 = dcy + ri * Math.sin(e);
+          const x4 = dcx + ri * Math.cos(s), y4 = dcy + ri * Math.sin(s);
+          const lg = (s1 - s0) > 180 ? 1 : 0;
+          return `M${x1},${y1} A${ro},${ro} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${lg} 0 ${x4},${y4} Z`;
+        };
+        let cursor = 0;
+        const segments = scoringData.map(({ label, count, color }) => {
+          const sweep = totalHoles ? (count / totalHoles) * 360 : 0;
+          const start = cursor; cursor += sweep;
+          return { label, pct: totalHoles ? Math.round(count / totalHoles * 100) : 0, color, start, sweep };
+        });
+
+        // Determine grid columns — always show scoring; fairway only if data exists
+        const showFairway = fhHoles.length > 0;
+        const showRecent  = roundStats.length > 0;
+        const cols = showFairway
+          ? (showRecent ? "2fr 2fr 1fr" : "1fr 1fr")
+          : (showRecent ? "2fr 1fr" : "1fr");
+
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "stretch" }}>
+
+            {/* Fairway Distribution */}
+            {showFairway && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Fairway Distribution</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+                  <svg width={FW} height={FH} viewBox={`0 0 ${FW} ${FH}`} style={{ overflow: "visible", flexShrink: 0 }}>
+                    <path d={halfArc(-90, 90, fr, fri)} fill={C.border} />
+                    {leftPct  > 0.5 && <path d={halfArc(fa0 + g/2, fa1 - g/2, fr, fri)} fill={C.yellow} />}
+                    {hitPct   > 0.5 && <path d={halfArc(fa1 + g/2, fa2 - g/2, fr, fri)} fill={C.accentMid} />}
+                    {rightPct > 0.5 && <path d={halfArc(fa2 + g/2, fa3 - g/2, fr, fri)} fill={C.yellow} />}
+                  </svg>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
+                    {[
+                      { label: "Left miss",   pct: leftPct,  color: C.yellow },
+                      { label: "Hit fairway", pct: hitPct,   color: C.accentMid },
+                      { label: "Right miss",  pct: rightPct, color: C.yellow },
+                    ].map(({ label, pct, color }) => (
+                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
+                        <span style={{ fontSize: 17, fontWeight: 700, color: label === "Hit fairway" ? C.accent : C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               </div>
-            </div>
-          );
-        })()}
+            )}
 
-        {/* Scoring Distribution — donut left, legend right */}
-        {(() => {
-          const scoringData = [
-            { label: "Birdie+",  count: birdieOrBetter, color: C.accentMid },
-            { label: "Par",      count: pars,            color: C.accent },
-            { label: "Bogey",    count: bogeys,          color: C.yellow },
-            { label: "Double+",  count: doubles,         color: C.red },
-          ];
-          const parOrBetterPct = totalHoles ? Math.round((birdieOrBetter + pars) / totalHoles * 100) : 0;
-          const S = 140, cx = S / 2, cy = S / 2, r = 62, ri = 40;
-          const toRad = d => (d - 90) * Math.PI / 180;
-          const arc = (s0, s1, ro, ri2) => {
-            const s = toRad(s0), e = toRad(s1);
-            const x1 = cx + ro * Math.cos(s), y1 = cy + ro * Math.sin(s);
-            const x2 = cx + ro * Math.cos(e), y2 = cy + ro * Math.sin(e);
-            const x3 = cx + ri2 * Math.cos(e), y3 = cy + ri2 * Math.sin(e);
-            const x4 = cx + ri2 * Math.cos(s), y4 = cy + ri2 * Math.sin(s);
-            const lg = (s1 - s0) > 180 ? 1 : 0;
-            return `M${x1},${y1} A${ro},${ro} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${ri2},${ri2} 0 ${lg} 0 ${x4},${y4} Z`;
-          };
-          let cursor = 0;
-          const segments = scoringData.map(({ label, count, color }) => {
-            const sweep = totalHoles ? (count / totalHoles) * 360 : 0;
-            const start = cursor; cursor += sweep;
-            return { label, pct: totalHoles ? Math.round(count / totalHoles * 100) : 0, color, start, sweep };
-          });
-          return (
+            {/* Scoring Distribution */}
             <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
               <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Scoring Distribution</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, flex: 1 }}>
-                <svg width={S} height={S} viewBox={`0 0 ${S} ${S}`} style={{ flexShrink: 0 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+                <svg width={DS} height={DS} viewBox={`0 0 ${DS} ${DS}`} style={{ flexShrink: 0 }}>
                   {segments.map(({ label, sweep, start, color }) =>
-                    sweep > 0.5 ? <path key={label} d={arc(start + 1, start + sweep - 1, r, ri)} fill={color} /> : null
+                    sweep > 0.5 ? <path key={label} d={fullArc(start + 1, start + sweep - 1, dr, dri)} fill={color} /> : null
                   )}
-                  <text x={cx} y={cy - 7}  textAnchor="middle" fontSize="16" fontWeight="700" fill={C.accent} fontFamily="'DM Mono', monospace">{parOrBetterPct}%</text>
-                  <text x={cx} y={cy + 7}  textAnchor="middle" fontSize="9" fill={C.muted} fontFamily="Georgia">par or</text>
-                  <text x={cx} y={cy + 18} textAnchor="middle" fontSize="9" fill={C.muted} fontFamily="Georgia">better</text>
+                  <text x={dcx} y={dcy - 6}  textAnchor="middle" fontSize="15" fontWeight="700" fill={C.accent} fontFamily="'DM Mono', monospace">{parOrBetterPct}%</text>
+                  <text x={dcx} y={dcy + 7}  textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">par or</text>
+                  <text x={dcx} y={dcy + 17} textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">better</text>
                 </svg>
-                <div style={{ display: "flex", flexDirection: "column", gap: 10, flex: 1 }}>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
                   {segments.map(({ label, pct, color }) => (
                     <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                       <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
                       <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
-                      <span style={{ fontSize: 18, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
+                      <span style={{ fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
                     </div>
                   ))}
                 </div>
               </div>
             </div>
-          );
-        })()}
 
-      </div>
-
-      {clubStats.length > 0 && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Club Performance</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-            {clubStats.map(({ club, attempts, gir, girPct: gp }) => {
-              const color = gp >= 60 ? C.accentMid : gp >= 35 ? C.yellow : C.red;
-              return (
-                <div key={club} style={{ display: "flex", alignItems: "center", gap: 14 }}>
-                  <div style={{ width: 52, fontWeight: 700, fontSize: 14, color: C.text, fontFamily: "'DM Mono', monospace" }}>{club}</div>
-                  <div style={{ flex: 1 }}><MiniBar pct={gp} color={color} /></div>
-                  <div style={{ width: 52, textAlign: "right", fontWeight: 700, fontSize: 14, color, fontFamily: "'DM Mono', monospace" }}>{gp}%</div>
-                  <div style={{ width: 64, fontSize: 12, color: C.muted, textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{gir}/{attempts}</div>
+            {/* Recent Rounds — compact, 20% column */}
+            {showRecent && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Recent Rounds</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                  {[...roundStats].reverse().map((r, i) => {
+                    const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
+                    const relStr = r.rel >= 0 ? `+${r.rel}` : `${r.rel}`;
+                    return (
+                      <div key={i} style={{ display: "flex", flexDirection: "column", gap: 1, paddingBottom: 8, borderBottom: i < roundStats.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                        <div style={{ fontSize: 11, color: C.muted }}>{r.date}</div>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.course || "—"}</div>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: col, fontSize: 14 }}>
+                          {r.total} <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>({relStr})</span>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              );
-            })}
+              </div>
+            )}
+
           </div>
-        </div>
-      )}
+        );
+      })()}
+
+      {/* ── Club Performance with group subtotals ────────────────────────── */}
+      {clubStats.length > 0 && (() => {
+        const GROUPS = [
+          { label: "Wedges",      clubs: ["LW","SW","GW","PW"] },
+          { label: "Short irons", clubs: ["9i","8i","7i"] },
+          { label: "Long irons",  clubs: ["6i","5i","4i"] },
+          { label: "Woods",       clubs: ["Hybrid","3w","Dr"] },
+        ];
+        const groupSummaries = GROUPS.map(({ label, clubs }) => {
+          const matching = clubStats.filter(cs => clubs.includes(cs.club));
+          if (!matching.length) return null;
+          const totalAttempts = matching.reduce((s, c) => s + c.attempts, 0);
+          const totalGir      = matching.reduce((s, c) => s + c.gir, 0);
+          const pct = totalAttempts ? Math.round(totalGir / totalAttempts * 100) : 0;
+          return { label, pct, attempts: totalAttempts };
+        }).filter(Boolean);
+        return (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Club Performance</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12, marginBottom: groupSummaries.length ? 20 : 0 }}>
+              {clubStats.map(({ club, attempts, gir, girPct: gp }) => {
+                const color = gp >= 60 ? C.accentMid : gp >= 35 ? C.yellow : C.red;
+                return (
+                  <div key={club} style={{ display: "flex", alignItems: "center", gap: 14 }}>
+                    <div style={{ width: 52, fontWeight: 700, fontSize: 14, color: C.text, fontFamily: "'DM Mono', monospace" }}>{club}</div>
+                    <div style={{ flex: 1 }}><MiniBar pct={gp} color={color} /></div>
+                    <div style={{ width: 52, textAlign: "right", fontWeight: 700, fontSize: 14, color, fontFamily: "'DM Mono', monospace" }}>{gp}%</div>
+                    <div style={{ width: 64, fontSize: 12, color: C.muted, textAlign: "right", fontFamily: "'DM Mono', monospace" }}>{gir}/{attempts}</div>
+                  </div>
+                );
+              })}
+            </div>
+            {groupSummaries.length > 0 && (
+              <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 16, display: "grid", gridTemplateColumns: `repeat(${groupSummaries.length}, 1fr)`, gap: 8 }}>
+                {groupSummaries.map(({ label, pct, attempts }) => {
+                  const color = pct >= 60 ? C.accentMid : pct >= 35 ? C.yellow : C.red;
+                  return (
+                    <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: C.bg, borderRadius: 10, padding: "10px 6px" }}>
+                      <div style={{ fontSize: 18, fontWeight: 700, color, fontFamily: "'DM Mono', monospace" }}>{pct}%</div>
+                      <div style={{ fontSize: 11, fontWeight: 600, color: C.muted, textAlign: "center", letterSpacing: "0.04em" }}>{label}</div>
+                      <div style={{ fontSize: 10, color: C.muted, fontFamily: "'DM Mono', monospace" }}>{attempts} shots</div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── Score vs GIR + Putts by GIR side-by-side ────────────────────── */}
+      {(() => {
+        // Score vs GIR data
+        const girHit  = allHoles.filter(h => h.gir === true  && h.score !== "");
+        const girMiss = allHoles.filter(h => h.gir === false && h.score !== "");
+        const hasGIR  = girHit.length > 0 || girMiss.length > 0;
+        const avgHit  = girHit.length  ? girHit.reduce((s, h)  => s + (+h.score - h.par), 0) / girHit.length  : null;
+        const avgMiss = girMiss.length ? girMiss.reduce((s, h) => s + (+h.score - h.par), 0) / girMiss.length : null;
+        const roundGIR = filteredRounds.map(r => {
+          const hs = r.holes.filter(h => h.score !== "");
+          if (hs.length < 9) return null;
+          const girCount = hs.filter(h => h.gir === true).length;
+          return { girPct: Math.round(girCount / hs.length * 100), rel: hs.reduce((s, h) => s + (+h.score - h.par), 0), course: r.course || r.courseObj?.name || "" };
+        }).filter(Boolean).sort((a, b) => a.girPct - b.girPct);
+        const fmtRel = v => v === null ? "—" : (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
+        const hitCol  = avgHit  !== null ? (avgHit  <= 0 ? C.accentMid : avgHit  <= 0.3 ? C.yellow : C.red) : C.muted;
+        const missCol = avgMiss !== null ? (avgMiss <= 1 ? C.yellow : C.red) : C.muted;
+
+        // Putts by GIR data
+        const puttPanels = [
+          { label: "Hit GIR",    holes: allHoles.filter(h => h.gir === true  && h.putts !== "") },
+          { label: "Missed GIR", holes: allHoles.filter(h => h.gir === false && h.putts !== "") },
+        ].filter(p => p.holes.length > 0);
+        const hasPutts = puttPanels.length > 0;
+
+        if (!hasGIR && !hasPutts) return null;
+
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+
+            {/* Score vs GIR */}
+            {hasGIR && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Score vs GIR</div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: roundGIR.length > 1 ? 16 : 0 }}>
+                  {[
+                    { label: "Hit GIR",    value: fmtRel(avgHit),  color: hitCol },
+                    { label: "Missed GIR", value: fmtRel(avgMiss), color: missCol },
+                  ].map(({ label, value, color }) => (
+                    <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 3 }}>
+                      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted }}>{label}</div>
+                      <div style={{ fontSize: 26, fontWeight: 700, color, fontFamily: "'DM Mono', monospace" }}>{value}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>avg vs par</div>
+                    </div>
+                  ))}
+                </div>
+                {roundGIR.length > 1 && (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, marginBottom: 2 }}>Rounds by GIR %</div>
+                    {roundGIR.map((r, i) => {
+                      const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
+                      return (
+                        <div key={i} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <div style={{ width: 34, fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700, color: C.accent, textAlign: "right" }}>{r.girPct}%</div>
+                          <div style={{ flex: 1 }}><MiniBar pct={r.girPct} color={C.accentMid} /></div>
+                          <div style={{ width: 90, fontSize: 11, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.course}</div>
+                          <div style={{ width: 34, fontFamily: "'DM Mono', monospace", fontSize: 11, fontWeight: 700, color: col, textAlign: "right" }}>{r.rel >= 0 ? `+${r.rel}` : r.rel}</div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Putts by GIR */}
+            {hasPutts && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Putts by GIR</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                  {puttPanels.map(({ label, holes }) => {
+                    const avg = (holes.reduce((s, h) => s + +h.putts, 0) / holes.length).toFixed(2);
+                    const one   = holes.filter(h => +h.putts === 1).length;
+                    const two   = holes.filter(h => +h.putts === 2).length;
+                    const three = holes.filter(h => +h.putts >= 3).length;
+                    const avgCol = +avg <= 1.7 ? C.accentMid : +avg <= 2.0 ? C.yellow : C.red;
+                    return (
+                      <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                        <div>
+                          <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, marginBottom: 3 }}>{label}</div>
+                          <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+                            <span style={{ fontSize: 24, fontWeight: 700, color: avgCol, fontFamily: "'DM Mono', monospace" }}>{avg}</span>
+                            <span style={{ fontSize: 11, color: C.muted }}>avg putts</span>
+                          </div>
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+                          {[
+                            { label: "1-putt",  count: one,   color: C.accentMid },
+                            { label: "2-putt",  count: two,   color: C.accent },
+                            { label: "3-putt+", count: three, color: C.red },
+                          ].map(({ label: pl, count, color }) => (
+                            <div key={pl} style={{ display: "flex", flexDirection: "column", gap: 3 }}>
+                              <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11 }}>
+                                <span style={{ color: C.muted }}>{pl}</span>
+                                <span style={{ fontWeight: 600, color: C.text, fontFamily: "'DM Mono', monospace" }}>{Math.round(count / holes.length * 100)}%</span>
+                              </div>
+                              <MiniBar pct={count / holes.length * 100} color={color} />
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+          </div>
+        );
+      })()}
 
       {/* ── Scoring by Par Type ─────────────────────────────────────────────── */}
       {(() => {
@@ -718,9 +894,9 @@ function Dashboard({ rounds, courses }) {
                     <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr 1fr", gap: 10 }}>
                       {[
                         { label: "Birdie+", count: bird, color: C.accentMid },
-                        { label: "Par", count: p, color: C.accent },
-                        { label: "Bogey", count: bog, color: C.yellow },
-                        { label: "Dbl+", count: dbl, color: C.red },
+                        { label: "Par",     count: p,    color: C.accent },
+                        { label: "Bogey",   count: bog,  color: C.yellow },
+                        { label: "Dbl+",    count: dbl,  color: C.red },
                       ].map(({ label, count: c, color }) => (
                         <div key={label} style={{ display: "flex", flexDirection: "column", gap: 5 }}>
                           <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
@@ -738,130 +914,6 @@ function Dashboard({ rounds, courses }) {
           </div>
         );
       })()}
-
-      {/* ── Score vs GIR ───────────────────────────────────────────────────── */}
-      {(() => {
-        const girHit = allHoles.filter(h => h.gir === true && h.score !== "");
-        const girMiss = allHoles.filter(h => h.gir === false && h.score !== "");
-        if (!girHit.length && !girMiss.length) return null;
-        const avgHit = girHit.length ? (girHit.reduce((s, h) => s + (+h.score - h.par), 0) / girHit.length) : null;
-        const avgMiss = girMiss.length ? (girMiss.reduce((s, h) => s + (+h.score - h.par), 0) / girMiss.length) : null;
-        const roundGIR = filteredRounds.map(r => {
-          const hs = r.holes.filter(h => h.score !== "");
-          if (hs.length < 9) return null;
-          const girCount = hs.filter(h => h.gir === true).length;
-          const girPctR = Math.round(girCount / hs.length * 100);
-          const rel = hs.reduce((s, h) => s + (+h.score - h.par), 0);
-          return { date: r.date, course: r.course || r.courseObj?.name || "Unnamed", girPct: girPctR, rel };
-        }).filter(Boolean).sort((a, b) => a.girPct - b.girPct);
-        const fmtRel = v => v === null ? "—" : (v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2));
-        const hitCol = avgHit !== null ? (avgHit <= 0 ? C.accentMid : avgHit <= 0.3 ? C.yellow : C.red) : C.muted;
-        const missCol = avgMiss !== null ? (avgMiss <= 1 ? C.yellow : C.red) : C.muted;
-        return (
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Score vs GIR</div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, marginBottom: roundGIR.length > 1 ? 20 : 0 }}>
-              {[
-                { label: "Hit GIR", value: fmtRel(avgHit), color: hitCol },
-                { label: "Missed GIR", value: fmtRel(avgMiss), color: missCol },
-              ].map(({ label, value, color }) => (
-                <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 20px", display: "flex", flexDirection: "column", gap: 4 }}>
-                  <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted }}>{label}</div>
-                  <div style={{ fontSize: 28, fontWeight: 700, color, fontFamily: "'DM Mono', monospace" }}>{value}</div>
-                  <div style={{ fontSize: 12, color: C.muted }}>avg vs par</div>
-                </div>
-              ))}
-            </div>
-            {roundGIR.length > 1 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, marginBottom: 2 }}>Rounds by GIR% (low → high)</div>
-                {roundGIR.map((r, i) => {
-                  const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
-                  return (
-                    <div key={i} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                      <div style={{ width: 38, fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: C.accent, textAlign: "right" }}>{r.girPct}%</div>
-                      <div style={{ flex: 1 }}><MiniBar pct={r.girPct} color={C.accentMid} /></div>
-                      <div style={{ width: 110, fontSize: 12, color: C.muted, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.course}</div>
-                      <div style={{ width: 40, fontFamily: "'DM Mono', monospace", fontSize: 12, fontWeight: 700, color: col, textAlign: "right" }}>{r.rel >= 0 ? `+${r.rel}` : r.rel}</div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        );
-      })()}
-
-      {/* ── Putts by GIR ───────────────────────────────────────────────────── */}
-      {(() => {
-        const panels = [
-          { label: "Hit GIR", holes: allHoles.filter(h => h.gir === true && h.putts !== "") },
-          { label: "Missed GIR", holes: allHoles.filter(h => h.gir === false && h.putts !== "") },
-        ].filter(p => p.holes.length > 0);
-        if (!panels.length) return null;
-        return (
-          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Putts by GIR</div>
-            <div style={{ display: "grid", gridTemplateColumns: `repeat(${panels.length}, 1fr)`, gap: 16 }}>
-              {panels.map(({ label, holes }) => {
-                const avg = (holes.reduce((s, h) => s + +h.putts, 0) / holes.length).toFixed(2);
-                const one = holes.filter(h => +h.putts === 1).length;
-                const two = holes.filter(h => +h.putts === 2).length;
-                const three = holes.filter(h => +h.putts >= 3).length;
-                const avgCol = +avg <= 1.7 ? C.accentMid : +avg <= 2.0 ? C.yellow : C.red;
-                return (
-                  <div key={label} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "16px 18px", display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, marginBottom: 4 }}>{label}</div>
-                      <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
-                        <span style={{ fontSize: 26, fontWeight: 700, color: avgCol, fontFamily: "'DM Mono', monospace" }}>{avg}</span>
-                        <span style={{ fontSize: 12, color: C.muted }}>avg putts</span>
-                      </div>
-                    </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {[
-                        { label: "1-putt", count: one, color: C.accentMid },
-                        { label: "2-putt", count: two, color: C.accent },
-                        { label: "3-putt+", count: three, color: C.red },
-                      ].map(({ label: pl, count, color }) => (
-                        <div key={pl} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-                          <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12 }}>
-                            <span style={{ color: C.muted }}>{pl}</span>
-                            <span style={{ fontWeight: 600, color: C.text, fontFamily: "'DM Mono', monospace" }}>{Math.round(count / holes.length * 100)}%</span>
-                          </div>
-                          <MiniBar pct={count / holes.length * 100} color={color} />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })()}
-
-      {/* ── Recent Rounds ──────────────────────────────────────────────────── */}
-      {roundStats.length > 0 && (
-        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Recent Rounds</div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {[...roundStats].reverse().map((r, i) => {
-              const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
-              return (
-                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                  <div style={{ fontSize: 13, color: C.muted, width: 90, flexShrink: 0 }}>{r.date}</div>
-                  <div style={{ fontSize: 14, color: C.text, flex: 1, fontWeight: 500 }}>{r.course || "—"}</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: col, fontFamily: "'DM Mono', monospace", width: 50, textAlign: "right" }}>
-                    {r.rel >= 0 ? `+${r.rel}` : r.rel}
-                  </div>
-                  <div style={{ width: 80 }}><MiniBar pct={Math.min(100, 60 + r.rel * -3)} color={col} /></div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
       </>))}
     </div>
   );
