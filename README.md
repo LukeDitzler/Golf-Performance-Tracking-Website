@@ -4,7 +4,7 @@
 
 A personal golf performance tracker built with React, Vite, Supabase, and Vercel. Log rounds, track stats, and analyze your game over time — with a shared course library so every player in your group benefits when someone adds a new course.
 
-Live at: [golf-performance-tracking.vercel.app](https://golf-performance-tracking.vercel.app)
+Live at: [fairway-caddie.vercel.app](https://fairway-caddie.vercel.app/)
 
 ---
 
