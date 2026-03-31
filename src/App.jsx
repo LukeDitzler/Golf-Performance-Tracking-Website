@@ -220,8 +220,17 @@ function sgTourExpectedOffGreen(distYards, lie) {
   return table[lo] + t * (table[hi] - table[lo]);
 }
 function sgTourExpectedPutt(distFeet) {
-  const ft = Math.max(0.5, distFeet);
-  return 1 + Math.exp(-0.011 * ft + 0.14);
+  // Interpolate from Broadie's empirical table — correctly increasing with distance
+  const table = SG_TOUR_DATA.putting.green;
+  const distances = Object.keys(table).map(Number).sort((a, b) => a - b);
+  const ft = Math.max(distances[0], Math.min(distFeet, distances[distances.length - 1]));
+  if (table[ft] !== undefined) return table[ft];
+  let lo = distances[0], hi = distances[distances.length - 1];
+  for (let i = 0; i < distances.length - 1; i++) {
+    if (distances[i] <= ft && ft <= distances[i + 1]) { lo = distances[i]; hi = distances[i + 1]; break; }
+  }
+  const t = (ft - lo) / (hi - lo);
+  return table[lo] + t * (table[hi] - table[lo]);
 }
 function sgGetExpected({ distYards, distFeet, lie, benchmarkHcp = 0 }) {
   const scale = sgInterpolateScale(lie === 'green' ? 'green' : lie, benchmarkHcp);
@@ -554,7 +563,7 @@ function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, cou
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ rounds, courses, sgMode = false }) {
+function Dashboard({ rounds, courses, sgMode = false, userHandicap = null }) {
   const [mode, setMode] = useState("basic");
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
@@ -683,7 +692,7 @@ function Dashboard({ rounds, courses, sgMode = false }) {
       </FilterBar>
 
       {/* ── Advanced: Strokes Gained Dashboard ───────────────────────────── */}
-      {mode === "advanced" && <AdvancedDashboard filteredRounds={filteredRounds} noData={noData} sgMode={sgMode} />}
+      {mode === "advanced" && <AdvancedDashboard filteredRounds={filteredRounds} noData={noData} sgMode={sgMode} userHandicap={userHandicap} />}
 
       {/* ── Basic stats (hidden in advanced mode) ────────────────────────── */}
       {mode === "basic" && (noData ? (
@@ -1085,8 +1094,10 @@ function SGCategoryCard({ label, value, icon, roundValues = [] }) {
   );
 }
 
-function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
-  const [benchmarkHcp, setBenchmarkHcp] = useState(0);
+function AdvancedDashboard({ filteredRounds, noData, sgMode = false, userHandicap = null }) {
+  // Use user's own handicap as the baseline. SG = 0 means performing exactly as expected.
+  // Clamp to valid range; default to 0 (Tour) if no handicap set.
+  const benchmarkHcp = userHandicap !== null ? Math.max(0, Math.min(+userHandicap, 28)) : 0;
   const [sgDropdownOpen, setSgDropdownOpen] = useState(false);
 
   if (noData) return (
@@ -1136,39 +1147,27 @@ function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
   const TABLE_DISTANCES = [10, 25, 50, 100, 150, 200, 250, 300];
   const TABLE_LIES = ["fairway", "rough", "sand", "tee"];
 
-  // Benchmark HCP options
-  const hcpOptions = [
-    { label: "Tour (0)", value: 0 },
-    { label: "5 hcp",   value: 5 },
-    { label: "10 hcp",  value: 10 },
-    { label: "15 hcp",  value: 15 },
-    { label: "20 hcp",  value: 20 },
-    { label: "28 hcp",  value: 28 },
-  ];
-
   const sgSign = (v) => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
   const sgColor = (v) => v > 0.3 ? C.accentMid : v < -0.3 ? C.red : C.yellow;
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
 
-      {/* ── Benchmark selector ─────────────────────────────────────────────── */}
-      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
-        <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, flexShrink: 0 }}>Benchmark</span>
-        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {hcpOptions.map(({ label, value }) => (
-            <button key={value} onClick={() => setBenchmarkHcp(value)} style={{
-              padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
-              cursor: "pointer", border: `1.5px solid ${benchmarkHcp === value ? C.accent : C.border}`,
-              background: benchmarkHcp === value ? C.accent : "transparent",
-              color: benchmarkHcp === value ? "#fff" : C.muted,
-              transition: "all 0.15s", fontFamily: "inherit",
-            }}>{label}</button>
-          ))}
+      {/* ── Handicap baseline indicator ───────────────────────────────────── */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 14, flexWrap: "wrap" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Your Baseline</span>
+          <span style={{ background: C.accent, color: "#fff", borderRadius: 20, padding: "4px 14px", fontSize: 13, fontWeight: 700, fontFamily: "'DM Mono', monospace" }}>
+            {userHandicap !== null ? `${(+userHandicap).toFixed(1)} HCP` : "No HCP set"}
+          </span>
         </div>
-        <span style={{ fontSize: 12, color: C.muted, marginLeft: "auto" }}>
-          Comparing your play vs. a <strong style={{ color: C.text }}>{benchmarkHcp === 0 ? "PGA Tour" : `${benchmarkHcp}-handicap`}</strong> benchmark
-        </span>
+        <div style={{ fontSize: 12, color: C.muted, textAlign: "right" }}>
+          {userHandicap !== null ? (
+            <>SG = 0 means you're playing <strong style={{ color: C.text }}>exactly as expected</strong> for a {(+userHandicap).toFixed(1)} handicap. Positive = better than expected.</>
+          ) : (
+            <>Set your GHIN handicap in <strong style={{ color: C.text }}>⚙️ Settings</strong> to personalise your SG baseline. Currently using Tour (scratch) as baseline.</>
+          )}
+        </div>
       </div>
 
       {/* ── Precision vs estimated banner ─────────────────────────────────── */}
@@ -1199,7 +1198,7 @@ function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 52, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
             {avgTotal >= 0 ? "+" : ""}{avgTotal.toFixed(2)}
           </div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 6 }}>avg over {roundSGs.length} round{roundSGs.length !== 1 ? "s" : ""}{!sgMode ? " · estimated" : ""}</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 6 }}>avg over {roundSGs.length} round{roundSGs.length !== 1 ? "s" : ""} · {userHandicap !== null ? `${(+userHandicap).toFixed(1)} HCP baseline` : "scratch baseline"}{!sgMode ? " · estimated" : ""}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 12, padding: "10px 18px", display: "flex", gap: 18 }}>
@@ -1337,7 +1336,7 @@ function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>Benchmark Scale Factors by Handicap</div>
               <div style={{ fontSize: 13, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-                Expected strokes at each distance are scaled from PGA Tour baselines using data anchored to Broadie (Every Shot Counts), Shot Scope 80M-shot database, and Pinpoint Golf benchmarks. A {benchmarkHcp === 0 ? "Tour player" : `${benchmarkHcp}-handicap golfer`} is your current benchmark.
+                Expected strokes at each distance are scaled from PGA Tour baselines using data anchored to Broadie (Every Shot Counts), Shot Scope 80M-shot database, and Pinpoint Golf benchmarks. Your {userHandicap !== null ? `${(+userHandicap).toFixed(1)}-handicap` : "scratch"} baseline is interpolated between these bands.
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1376,10 +1375,10 @@ function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
             {/* Expected strokes table */}
             <div>
               <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>
-                Expected Strokes Table — {benchmarkHcp === 0 ? "Tour Baseline" : `${benchmarkHcp} Handicap Benchmark`}
+                Expected Strokes Table — {userHandicap !== null ? `${(+userHandicap).toFixed(1)} Handicap Baseline` : "Scratch / Tour Baseline"}
               </div>
               <div style={{ fontSize: 13, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
-                How many strokes a {benchmarkHcp === 0 ? "PGA Tour player" : `${benchmarkHcp}-handicap golfer`} is expected to need to hole out from each distance and lie. These are the E(start) values used in the SG formula.
+                How many strokes a {userHandicap !== null ? `${(+userHandicap).toFixed(1)}-handicap golfer` : "scratch golfer"} is expected to need to hole out from each distance and lie. These are the E(start) values used in the SG formula.
               </div>
               <div style={{ overflowX: "auto" }}>
                 <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
@@ -1411,7 +1410,7 @@ function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
                 </table>
               </div>
               <div style={{ marginTop: 12, fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
-                <strong style={{ color: C.text }}>Putting distances above are in feet.</strong> Off-green distances are in yards. Tour baseline fitted to Mark Broadie's Table 5.2 anchor points from <em>Every Shot Counts</em>. Putting curve: E(ft) = 1 + exp(−0.011 × ft + 0.14).
+                <strong style={{ color: C.text }}>Putting distances above are in feet.</strong> Off-green distances are in yards. Tour baseline fitted to Mark Broadie's Table 5.2 anchor points from <em>Every Shot Counts</em>. Putting values interpolated directly from Broadie's empirical make-rate table.
               </div>
             </div>
 
@@ -2740,7 +2739,7 @@ export default function GolfTracker() {
           <div style={{ padding: 40, color: C.muted }}>Loading…</div>
         ) : session && tab !== "leaderboard" ? (
           <>
-            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} />}
+            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} userHandicap={profiles.find(p => p.id === userId)?.handicap ?? null} />}
             {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
