@@ -23,7 +23,7 @@ export default async function handler(req, res) {
   if (req.method === "GET") {
     const { data, error } = await supabase
       .from("profiles")
-      .select("id, first_name, last_name, age, handicap, home_state, handedness")
+      .select("id, first_name, last_name, age, handicap, home_state, handedness, sg_mode")
       .order("handicap", { ascending: true, nullsLast: true });
     if (error) return res.status(500).json({ error: error.message });
     return res.status(200).json(data);
@@ -35,11 +35,11 @@ export default async function handler(req, res) {
 
   // ── POST / PUT: upsert the current user's profile ─────────────────────────
   if (req.method === "POST" || req.method === "PUT") {
-    const { first_name, last_name, age, handicap, home_state, handedness } = req.body;
+    const { first_name, last_name, age, handicap, home_state, handedness, sg_mode } = req.body;
     const { error } = await supabase
       .from("profiles")
       .upsert(
-        { id: user.id, first_name, last_name, age, handicap, home_state, handedness },
+        { id: user.id, first_name, last_name, age, handicap, home_state, handedness, sg_mode },
         { onConflict: "id" }
       );
     if (error) return res.status(500).json({ error: error.message });
