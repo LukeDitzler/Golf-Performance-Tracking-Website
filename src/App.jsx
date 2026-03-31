@@ -167,6 +167,121 @@ const labelStyle = {
   marginBottom: 6, letterSpacing: "0.06em", textTransform: "uppercase",
 };
 
+// ── Strokes Gained — inlined data + calculator ───────────────────────────────
+const SG_TOUR_DATA = {
+  off_green: {
+    fairway:  {10:1.383,15:1.600,20:1.773,25:1.920,30:2.049,40:2.261,50:2.431,60:2.574,75:2.759,100:3.072,125:3.337,150:3.544,175:3.721,200:3.876,225:4.015,250:4.140,275:4.255,300:4.360,350:4.551,400:4.720,450:4.872,500:5.011},
+    rough:    {10:1.556,15:1.806,20:2.001,25:2.164,30:2.307,40:2.550,50:2.742,60:2.904,75:3.109,100:3.462,125:3.753,150:4.025,175:4.220,200:4.395,225:4.552,250:4.695,275:4.825,300:4.946,350:5.163,400:5.355,450:5.531,500:5.692},
+    sand:     {10:1.651,15:1.951,20:2.147,25:2.311,30:2.455,40:2.699,50:2.897,60:3.064,75:3.272,100:3.625,125:3.915,150:4.188,175:4.382,200:4.559,225:4.716,250:4.860,275:4.990,300:5.111,350:5.326,400:5.519,450:5.694,500:5.855},
+    recovery: {10:1.708,15:2.014,20:2.215,25:2.382,30:2.528,40:2.776,50:2.976,60:3.145,75:3.356,100:3.713,125:4.006,150:4.283,175:4.479,200:4.658,225:4.817,250:4.962,275:5.095,300:5.217,350:5.434,400:5.629,450:5.806,500:5.968},
+    tee:      {10:1.340,15:1.551,20:1.720,25:1.863,30:1.988,40:2.194,50:2.361,60:2.501,75:2.681,100:2.988,125:3.248,150:3.460,175:3.640,200:3.798,225:3.939,250:4.066,275:4.182,300:4.290,350:4.483,400:4.655,450:4.809,500:4.949},
+  },
+  putting: {
+    green: {1:1.142,2:1.159,3:1.180,4:1.207,5:1.239,6:1.276,7:1.317,8:1.361,9:1.407,10:1.454,12:1.550,15:1.683,18:1.805,20:1.878,25:2.043,30:2.188,35:2.316,40:2.430,50:2.626,60:2.789},
+  },
+};
+const HCP_BANDS = [0, 5, 10, 15, 20, 28];
+const SCALE_FACTORS = {
+  fairway:  [1.00, 1.22, 1.42, 1.60, 1.78, 2.05],
+  rough:    [1.00, 1.30, 1.55, 1.80, 2.05, 2.40],
+  sand:     [1.00, 1.35, 1.65, 1.95, 2.25, 2.65],
+  recovery: [1.00, 1.40, 1.75, 2.10, 2.45, 2.90],
+  tee:      [1.00, 1.18, 1.35, 1.52, 1.68, 1.92],
+  green:    [1.00, 1.08, 1.16, 1.24, 1.32, 1.45],
+};
+function sgInterpolateScale(lie, hcp) {
+  const factors = SCALE_FACTORS[lie] ?? SCALE_FACTORS.fairway;
+  const clampedHcp = Math.max(0, Math.min(hcp, HCP_BANDS[HCP_BANDS.length - 1]));
+  for (let i = 0; i < HCP_BANDS.length - 1; i++) {
+    if (clampedHcp <= HCP_BANDS[i + 1]) {
+      const t = (clampedHcp - HCP_BANDS[i]) / (HCP_BANDS[i + 1] - HCP_BANDS[i]);
+      return factors[i] + t * (factors[i + 1] - factors[i]);
+    }
+  }
+  return factors[factors.length - 1];
+}
+function sgTourExpectedOffGreen(distYards, lie) {
+  const table = SG_TOUR_DATA.off_green[lie] ?? SG_TOUR_DATA.off_green.fairway;
+  const distances = Object.keys(table).map(Number).sort((a, b) => a - b);
+  const d = Math.max(distances[0], Math.min(distYards, distances[distances.length - 1]));
+  if (table[d] !== undefined) return table[d];
+  let lo = distances[0], hi = distances[distances.length - 1];
+  for (let i = 0; i < distances.length - 1; i++) {
+    if (distances[i] <= d && d <= distances[i + 1]) { lo = distances[i]; hi = distances[i + 1]; break; }
+  }
+  const t = (d - lo) / (hi - lo);
+  return table[lo] + t * (table[hi] - table[lo]);
+}
+function sgTourExpectedPutt(distFeet) {
+  const ft = Math.max(0.5, distFeet);
+  return 1 + Math.exp(-0.011 * ft + 0.14);
+}
+function sgGetExpected({ distYards, distFeet, lie, benchmarkHcp = 0 }) {
+  const scale = sgInterpolateScale(lie === 'green' ? 'green' : lie, benchmarkHcp);
+  if (lie === 'green') {
+    const ft = distFeet ?? (distYards * 3);
+    return sgTourExpectedPutt(ft) * scale;
+  }
+  return sgTourExpectedOffGreen(distYards, lie) * scale;
+}
+function sgCalcRound(round, benchmarkHcp = 0) {
+  const holes = round.holes || [];
+  let sgOffTee = 0, sgApproach = 0, sgAroundGreen = 0, sgPutting = 0;
+  const nearestBand = HCP_BANDS.reduce((prev, b) =>
+    Math.abs(b - benchmarkHcp) < Math.abs(prev - benchmarkHcp) ? b : prev);
+  const GIR_RATES = { 0:0.65, 5:0.55, 10:0.45, 15:0.38, 20:0.30, 28:0.22 };
+  const FH_RATES  = { 0:0.62, 5:0.57, 10:0.52, 15:0.47, 20:0.42, 28:0.35 };
+  const benchmarkGirRate = GIR_RATES[nearestBand];
+  const benchmarkFhRate  = FH_RATES[nearestBand];
+  for (const hole of holes) {
+    if (!hole.score || hole.score === '') continue;
+    const par = hole.par || 4;
+    const putts = parseInt(hole.putts, 10);
+    const girHit = hole.gir === true;
+    const fhHit  = hole.fh === true;
+    if (!isNaN(putts)) {
+      const firstPuttFt = hole.distToPin ? hole.distToPin * 3 : girHit ? 25 : 10;
+      const expectedPutts = sgGetExpected({ distFeet: firstPuttFt, lie: 'green', benchmarkHcp });
+      sgPutting += expectedPutts - putts;
+    }
+    if (!girHit && par >= 4) {
+      if (hole.upAndDown === true)  sgAroundGreen += 0.50;
+      if (hole.upAndDown === false) sgAroundGreen -= 0.35;
+    }
+    if (par >= 4) {
+      if (hole.distToPin !== undefined && hole.distToPin !== '') {
+        const endDistFt = +hole.distToPin * 3;
+        const approachEndE = sgGetExpected({ distFeet: endDistFt, lie: 'green', benchmarkHcp });
+        const benchmarkProximityFt = girHit ? 25 : 45;
+        const benchmarkEndE = sgGetExpected({ distFeet: benchmarkProximityFt, lie: 'green', benchmarkHcp });
+        sgApproach += benchmarkEndE - approachEndE;
+      } else {
+        if (girHit && benchmarkGirRate < 0.99)  sgApproach += (1 - benchmarkGirRate) * 0.45;
+        if (!girHit && benchmarkGirRate > 0.01) sgApproach -= benchmarkGirRate * 0.45;
+      }
+    }
+    if (par >= 4) {
+      if (hole.teeDistToPin !== undefined && hole.teeDistToPin !== '') {
+        const teeEndLie = fhHit ? 'fairway' : 'rough';
+        const teeEndE = sgGetExpected({ distYards: +hole.teeDistToPin, lie: teeEndLie, benchmarkHcp });
+        const benchmarkTeeDistYds = Math.max(50, 170 + benchmarkHcp * -2.5);
+        const benchmarkTeeEndE = sgGetExpected({ distYards: benchmarkTeeDistYds, lie: 'fairway', benchmarkHcp });
+        sgOffTee += benchmarkTeeEndE - teeEndE;
+      } else {
+        if (fhHit && benchmarkFhRate < 0.99)  sgOffTee += (1 - benchmarkFhRate) * 0.25;
+        if (!fhHit && benchmarkFhRate > 0.01) sgOffTee -= benchmarkFhRate * 0.25;
+      }
+    }
+  }
+  return {
+    offTee:      +sgOffTee.toFixed(2),
+    approach:    +sgApproach.toFixed(2),
+    aroundGreen: +sgAroundGreen.toFixed(2),
+    putting:     +sgPutting.toFixed(2),
+    total:       +(sgOffTee + sgApproach + sgAroundGreen + sgPutting).toFixed(2),
+  };
+}
+
 // ── Stat card ────────────────────────────────────────────────────────────────
 function StatCard({ label, value, sub, accent }) {
   return (
@@ -542,16 +657,8 @@ function Dashboard({ rounds, courses }) {
         </div>
       </FilterBar>
 
-      {/* ── Advanced placeholder ──────────────────────────────────────────── */}
-      {mode === "advanced" && (
-        <div style={{ background: C.surface, border: `1.5px dashed ${C.border}`, borderRadius: 16, padding: "60px 40px", textAlign: "center" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>📐</div>
-          <div style={{ fontSize: 16, fontWeight: 700, color: C.text, marginBottom: 8 }}>Advanced Analytics</div>
-          <div style={{ fontSize: 14, color: C.muted, maxWidth: 400, margin: "0 auto", lineHeight: 1.6 }}>
-            Strokes Gained and other advanced stats are coming here. This workspace is reserved for deeper analysis that requires additional data entry per round.
-          </div>
-        </div>
-      )}
+      {/* ── Advanced: Strokes Gained Dashboard ───────────────────────────── */}
+      {mode === "advanced" && <AdvancedDashboard filteredRounds={filteredRounds} noData={noData} />}
 
       {/* ── Basic stats (hidden in advanced mode) ────────────────────────── */}
       {mode === "basic" && (noData ? (
@@ -915,6 +1022,379 @@ function Dashboard({ rounds, courses }) {
         );
       })()}
       </>))}
+    </div>
+  );
+}
+
+// ── ADVANCED DASHBOARD (Strokes Gained) ──────────────────────────────────────
+function SGBar({ value, maxAbs = 3 }) {
+  const pct = Math.min(Math.abs(value) / maxAbs * 50, 50);
+  const positive = value >= 0;
+  return (
+    <div style={{ position: "relative", height: 8, borderRadius: 4, background: C.border, width: "100%" }}>
+      {/* Center line */}
+      <div style={{ position: "absolute", left: "50%", top: 0, width: 1, height: "100%", background: C.muted, opacity: 0.4 }} />
+      {/* Bar */}
+      <div style={{
+        position: "absolute",
+        top: 0, height: "100%", borderRadius: 4,
+        width: `${pct}%`,
+        left: positive ? "50%" : `${50 - pct}%`,
+        background: positive ? C.accentMid : C.red,
+        transition: "width 0.5s ease",
+      }} />
+    </div>
+  );
+}
+
+function SGCategoryCard({ label, value, icon, roundValues = [] }) {
+  const color = value > 0.3 ? C.accentMid : value < -0.3 ? C.red : C.yellow;
+  const sign = value >= 0 ? "+" : "";
+  const trend = roundValues.length >= 3
+    ? roundValues.slice(-3).reduce((s, v) => s + v, 0) / 3
+    : null;
+  return (
+    <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: "18px 20px", display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 18 }}>{icon}</span>
+          <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>{label}</span>
+        </div>
+        {trend !== null && (
+          <span style={{ fontSize: 11, color: trend >= 0 ? C.accentMid : C.red, fontFamily: "'DM Mono', monospace", fontWeight: 600 }}>
+            {trend >= 0 ? "▲" : "▼"} {Math.abs(trend).toFixed(2)} 3-rnd
+          </span>
+        )}
+      </div>
+      <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 36, fontWeight: 700, color, lineHeight: 1 }}>
+        {sign}{value.toFixed(2)}
+      </div>
+      <SGBar value={value} />
+      <div style={{ fontSize: 11, color: C.muted }}>strokes gained vs benchmark</div>
+    </div>
+  );
+}
+
+function AdvancedDashboard({ filteredRounds, noData }) {
+  const [benchmarkHcp, setBenchmarkHcp] = useState(0);
+  const [sgDropdownOpen, setSgDropdownOpen] = useState(false);
+
+  if (noData) return (
+    <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+      <div style={{ fontSize: 36 }}>📐</div>
+      <div style={{ marginTop: 10, fontSize: 15 }}>No rounds match the active filters.</div>
+    </div>
+  );
+
+  // Compute per-round SG
+  const roundSGs = filteredRounds
+    .filter(r => r.holes.some(h => h.score !== ""))
+    .map(r => ({ ...sgCalcRound(r, benchmarkHcp), date: r.date, course: r.course || r.courseObj?.name || "—" }));
+
+  if (roundSGs.length === 0) return (
+    <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+      <div style={{ fontSize: 36 }}>📐</div>
+      <div style={{ marginTop: 10, fontSize: 15 }}>No completed rounds to analyze.</div>
+    </div>
+  );
+
+  // Aggregate averages
+  const avg = (key) => roundSGs.reduce((s, r) => s + r[key], 0) / roundSGs.length;
+  const avgOffTee      = avg("offTee");
+  const avgApproach    = avg("approach");
+  const avgAroundGreen = avg("aroundGreen");
+  const avgPutting     = avg("putting");
+  const avgTotal       = avg("total");
+
+  // Per-round arrays for trends
+  const offTeeVals      = roundSGs.map(r => r.offTee);
+  const approachVals    = roundSGs.map(r => r.approach);
+  const aroundGreenVals = roundSGs.map(r => r.aroundGreen);
+  const puttingVals     = roundSGs.map(r => r.putting);
+
+  // Strongest & weakest
+  const cats = [
+    { key: "offTee",      label: "Off the Tee",      icon: "🏌️", avg: avgOffTee },
+    { key: "approach",    label: "Approach",          icon: "🎯", avg: avgApproach },
+    { key: "aroundGreen", label: "Around the Green",  icon: "⛳", avg: avgAroundGreen },
+    { key: "putting",     label: "Putting",           icon: "🏳️", avg: avgPutting },
+  ];
+  const strongest = [...cats].sort((a, b) => b.avg - a.avg)[0];
+  const weakest   = [...cats].sort((a, b) => a.avg - b.avg)[0];
+
+  // SG lookup table for the explainer — sample distances
+  const TABLE_DISTANCES = [10, 25, 50, 100, 150, 200, 250, 300];
+  const TABLE_LIES = ["fairway", "rough", "sand", "tee"];
+
+  // Benchmark HCP options
+  const hcpOptions = [
+    { label: "Tour (0)", value: 0 },
+    { label: "5 hcp",   value: 5 },
+    { label: "10 hcp",  value: 10 },
+    { label: "15 hcp",  value: 15 },
+    { label: "20 hcp",  value: 20 },
+    { label: "28 hcp",  value: 28 },
+  ];
+
+  const sgSign = (v) => v >= 0 ? `+${v.toFixed(2)}` : v.toFixed(2);
+  const sgColor = (v) => v > 0.3 ? C.accentMid : v < -0.3 ? C.red : C.yellow;
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Benchmark selector ─────────────────────────────────────────────── */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 14, padding: "14px 20px", display: "flex", alignItems: "center", gap: 14, flexWrap: "wrap" }}>
+        <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, flexShrink: 0 }}>Benchmark</span>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+          {hcpOptions.map(({ label, value }) => (
+            <button key={value} onClick={() => setBenchmarkHcp(value)} style={{
+              padding: "5px 14px", borderRadius: 20, fontSize: 12, fontWeight: 600,
+              cursor: "pointer", border: `1.5px solid ${benchmarkHcp === value ? C.accent : C.border}`,
+              background: benchmarkHcp === value ? C.accent : "transparent",
+              color: benchmarkHcp === value ? "#fff" : C.muted,
+              transition: "all 0.15s", fontFamily: "inherit",
+            }}>{label}</button>
+          ))}
+        </div>
+        <span style={{ fontSize: 12, color: C.muted, marginLeft: "auto" }}>
+          Comparing your play vs. a <strong style={{ color: C.text }}>{benchmarkHcp === 0 ? "PGA Tour" : `${benchmarkHcp}-handicap`}</strong> benchmark
+        </span>
+      </div>
+
+      {/* ── Total SG hero ──────────────────────────────────────────────────── */}
+      <div style={{ background: avgTotal >= 0 ? C.accent : C.red, borderRadius: 18, padding: "28px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
+        <div>
+          <div style={{ fontSize: 12, fontWeight: 600, letterSpacing: "0.1em", textTransform: "uppercase", color: "rgba(255,255,255,0.7)", marginBottom: 6 }}>Total Strokes Gained / Round</div>
+          <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 52, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
+            {avgTotal >= 0 ? "+" : ""}{avgTotal.toFixed(2)}
+          </div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 6 }}>avg over {roundSGs.length} round{roundSGs.length !== 1 ? "s" : ""}</div>
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 12, padding: "10px 18px", display: "flex", gap: 18 }}>
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)" }}>Strength</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginTop: 2 }}>{strongest.icon} {strongest.label}</div>
+            </div>
+            <div style={{ width: 1, background: "rgba(255,255,255,0.2)" }} />
+            <div style={{ textAlign: "center" }}>
+              <div style={{ fontSize: 10, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: "rgba(255,255,255,0.6)" }}>Weakness</div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", marginTop: 2 }}>{weakest.icon} {weakest.label}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Four SG category cards ─────────────────────────────────────────── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 12 }}>
+        <SGCategoryCard label="Off the Tee"     icon="🏌️" value={avgOffTee}      roundValues={offTeeVals} />
+        <SGCategoryCard label="Approach"         icon="🎯" value={avgApproach}    roundValues={approachVals} />
+        <SGCategoryCard label="Around the Green" icon="⛳" value={avgAroundGreen} roundValues={aroundGreenVals} />
+        <SGCategoryCard label="Putting"          icon="🏳️" value={avgPutting}     roundValues={puttingVals} />
+      </div>
+
+      {/* ── Round-by-round SG table ────────────────────────────────────────── */}
+      {roundSGs.length > 1 && (
+        <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Round-by-Round Breakdown</div>
+          <div style={{ overflowX: "auto" }}>
+            <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+              <thead>
+                <tr>
+                  {["Date", "Course", "Off Tee", "Approach", "Arg", "Putting", "Total"].map(h => (
+                    <th key={h} style={{ textAlign: h === "Date" || h === "Course" ? "left" : "right", padding: "6px 10px", fontSize: 11, fontWeight: 600, letterSpacing: "0.06em", textTransform: "uppercase", color: C.muted, borderBottom: `1px solid ${C.border}` }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {[...roundSGs].reverse().map((r, i) => (
+                  <tr key={i} style={{ borderBottom: `1px solid ${C.border}` }}>
+                    <td style={{ padding: "10px 10px", fontFamily: "'DM Mono', monospace", fontSize: 12, color: C.muted }}>{r.date}</td>
+                    <td style={{ padding: "10px 10px", fontSize: 12, color: C.text, maxWidth: 120, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.course}</td>
+                    {[r.offTee, r.approach, r.aroundGreen, r.putting, r.total].map((v, j) => (
+                      <td key={j} style={{ padding: "10px 10px", textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: sgColor(v), fontSize: 13 }}>{sgSign(v)}</td>
+                    ))}
+                  </tr>
+                ))}
+                {/* Averages row */}
+                <tr style={{ background: C.accentLight }}>
+                  <td colSpan={2} style={{ padding: "10px 10px", fontSize: 12, fontWeight: 700, color: C.accent }}>Average</td>
+                  {[avgOffTee, avgApproach, avgAroundGreen, avgPutting, avgTotal].map((v, j) => (
+                    <td key={j} style={{ padding: "10px 10px", textAlign: "right", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: sgColor(v), fontSize: 13 }}>{sgSign(v)}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+      {/* ── SG Contribution bar ────────────────────────────────────────────── */}
+      {(() => {
+        const contributions = [
+          { label: "Off Tee",    value: avgOffTee,      color: "#3d9970",  icon: "🏌️" },
+          { label: "Approach",   value: avgApproach,    color: "#2d6a4f",  icon: "🎯" },
+          { label: "Arg",        value: avgAroundGreen, color: "#52b788",  icon: "⛳" },
+          { label: "Putting",    value: avgPutting,     color: "#1b4332",  icon: "🏳️" },
+        ];
+        const totalAbs = contributions.reduce((s, c) => s + Math.abs(c.value), 0);
+        if (totalAbs === 0) return null;
+        return (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>SG Contribution Breakdown</div>
+            {/* Stacked bar */}
+            <div style={{ display: "flex", height: 28, borderRadius: 8, overflow: "hidden", marginBottom: 16, gap: 2 }}>
+              {contributions.map(({ label, value, color }) => {
+                const pct = totalAbs ? Math.abs(value) / totalAbs * 100 : 0;
+                return (
+                  <div key={label} title={`${label}: ${sgSign(value)}`} style={{
+                    width: `${pct}%`, background: value >= 0 ? color : C.red,
+                    opacity: Math.abs(value) < 0.05 ? 0.3 : 1,
+                    transition: "width 0.5s ease",
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                  }}>
+                    {pct > 10 && <span style={{ fontSize: 10, color: "#fff", fontWeight: 700 }}>{pct.toFixed(0)}%</span>}
+                  </div>
+                );
+              })}
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 8 }}>
+              {contributions.map(({ label, value, color, icon }) => (
+                <div key={label} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, background: C.bg, borderRadius: 10, padding: "10px 6px" }}>
+                  <div style={{ fontSize: 16 }}>{icon}</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: sgColor(value), fontFamily: "'DM Mono', monospace" }}>{sgSign(value)}</div>
+                  <div style={{ fontSize: 10, fontWeight: 600, color: C.muted, textAlign: "center", letterSpacing: "0.04em" }}>{label}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })()}
+
+      {/* ── Methodology explainer — collapsible dropdown ───────────────────── */}
+      <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+        <button
+          onClick={() => setSgDropdownOpen(o => !o)}
+          style={{
+            width: "100%", background: "none", border: "none", cursor: "pointer",
+            padding: "18px 24px", display: "flex", alignItems: "center", justifyContent: "space-between",
+            fontFamily: "inherit",
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>📐</span>
+            <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>How is Strokes Gained calculated?</span>
+          </div>
+          <span style={{ fontSize: 16, color: C.muted, transform: sgDropdownOpen ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}>▾</span>
+        </button>
+
+        {sgDropdownOpen && (
+          <div style={{ padding: "0 24px 28px", display: "flex", flexDirection: "column", gap: 24, borderTop: `1px solid ${C.border}` }}>
+
+            {/* Formula */}
+            <div style={{ paddingTop: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 12 }}>The Formula</div>
+              <div style={{ background: C.accentLight, border: `1px solid ${C.accentMid}`, borderRadius: 12, padding: "16px 20px", fontFamily: "'DM Mono', monospace", fontSize: 14, color: C.accent, letterSpacing: "0.02em" }}>
+                SG (shot) = E(start) − E(end) − 1
+              </div>
+              <div style={{ marginTop: 12, fontSize: 13, color: C.muted, lineHeight: 1.65 }}>
+                For each shot, <strong style={{ color: C.text }}>E(start)</strong> is the expected strokes to hole out from where you started, and <strong style={{ color: C.text }}>E(end)</strong> is the expected strokes from where you ended up. Subtracting 1 accounts for the shot itself. A positive SG means you performed better than the benchmark; negative means worse.
+              </div>
+            </div>
+
+            {/* Benchmark section */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>Benchmark Scale Factors by Handicap</div>
+              <div style={{ fontSize: 13, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
+                Expected strokes at each distance are scaled from PGA Tour baselines using data anchored to Broadie (Every Shot Counts), Shot Scope 80M-shot database, and Pinpoint Golf benchmarks. A {benchmarkHcp === 0 ? "Tour player" : `${benchmarkHcp}-handicap golfer`} is your current benchmark.
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}`, fontWeight: 600, letterSpacing: "0.05em" }}>Lie</th>
+                      {HCP_BANDS.map(b => (
+                        <th key={b} style={{
+                          textAlign: "right", padding: "6px 10px", borderBottom: `1px solid ${C.border}`,
+                          color: b === benchmarkHcp ? C.accent : C.muted, fontWeight: 600, letterSpacing: "0.05em",
+                          background: b === benchmarkHcp ? C.accentLight : "transparent",
+                        }}>{b === 0 ? "Tour" : `${b} hcp`}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {Object.entries(SCALE_FACTORS).map(([lie, factors], i) => (
+                      <tr key={lie} style={{ background: i % 2 === 0 ? C.bg : C.surface }}>
+                        <td style={{ padding: "8px 10px", fontWeight: 600, color: C.text, textTransform: "capitalize" }}>{lie}</td>
+                        {factors.map((f, j) => (
+                          <td key={j} style={{
+                            padding: "8px 10px", textAlign: "right",
+                            fontFamily: "'DM Mono', monospace", fontSize: 12,
+                            color: HCP_BANDS[j] === benchmarkHcp ? C.accent : C.text,
+                            fontWeight: HCP_BANDS[j] === benchmarkHcp ? 700 : 400,
+                            background: HCP_BANDS[j] === benchmarkHcp ? C.accentLight : "transparent",
+                          }}>{f.toFixed(2)}×</td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            {/* Expected strokes table */}
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 10 }}>
+                Expected Strokes Table — {benchmarkHcp === 0 ? "Tour Baseline" : `${benchmarkHcp} Handicap Benchmark`}
+              </div>
+              <div style={{ fontSize: 13, color: C.muted, marginBottom: 14, lineHeight: 1.6 }}>
+                How many strokes a {benchmarkHcp === 0 ? "PGA Tour player" : `${benchmarkHcp}-handicap golfer`} is expected to need to hole out from each distance and lie. These are the E(start) values used in the SG formula.
+              </div>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
+                  <thead>
+                    <tr>
+                      <th style={{ textAlign: "left", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}`, fontWeight: 600, letterSpacing: "0.05em" }}>Dist (yds)</th>
+                      {TABLE_LIES.map(lie => (
+                        <th key={lie} style={{ textAlign: "right", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}`, fontWeight: 600, letterSpacing: "0.05em", textTransform: "capitalize" }}>{lie}</th>
+                      ))}
+                      <th style={{ textAlign: "right", padding: "6px 10px", color: C.muted, borderBottom: `1px solid ${C.border}`, fontWeight: 600, letterSpacing: "0.05em" }}>Putt (ft)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {TABLE_DISTANCES.map((dist, i) => (
+                      <tr key={dist} style={{ background: i % 2 === 0 ? C.bg : C.surface }}>
+                        <td style={{ padding: "8px 10px", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: C.accent }}>{dist}</td>
+                        {TABLE_LIES.map(lie => (
+                          <td key={lie} style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.text }}>
+                            {sgGetExpected({ distYards: dist, lie, benchmarkHcp }).toFixed(2)}
+                          </td>
+                        ))}
+                        {/* Putt column uses feet directly */}
+                        <td style={{ padding: "8px 10px", textAlign: "right", fontFamily: "'DM Mono', monospace", color: C.muted, fontSize: 11 }}>
+                          {dist <= 60 ? sgGetExpected({ distFeet: dist, lie: 'green', benchmarkHcp }).toFixed(2) : "—"}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div style={{ marginTop: 12, fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
+                <strong style={{ color: C.text }}>Putting distances above are in feet.</strong> Off-green distances are in yards. Tour baseline fitted to Mark Broadie's Table 5.2 anchor points from <em>Every Shot Counts</em>. Putting curve: E(ft) = 1 + exp(−0.011 × ft + 0.14).
+              </div>
+            </div>
+
+            {/* Data quality note */}
+            <div style={{ background: "#fffbea", border: `1px solid ${C.yellow}`, borderRadius: 10, padding: "12px 16px" }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.yellow, marginBottom: 5, letterSpacing: "0.04em" }}>⚠️ Data Quality Note</div>
+              <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
+                Without <strong style={{ color: C.text }}>distToPin</strong> and <strong style={{ color: C.text }}>teeDistToPin</strong> fields logged per hole, SG is estimated from binary flags (GIR, FH, Up&Down). Results are directionally accurate but less precise than shot-level data. Log distances per hole for higher-confidence SG numbers.
+              </div>
+            </div>
+
+          </div>
+        )}
+      </div>
     </div>
   );
 }
