@@ -15,6 +15,7 @@ const defaultHoles = (courseHoles) =>
     hole: i + 1,
     par: courseHoles ? courseHoles[i].par : 4,
     handicap: courseHoles ? courseHoles[i].handicap : i + 1,
+    yardage: courseHoles ? (courseHoles[i].yardage || "") : "",
     score: "",
     teeClub: "",
     fh: null,
@@ -24,6 +25,12 @@ const defaultHoles = (courseHoles) =>
     putts: "",
     upAndDown: null,
     penalty: 0,
+    // Precision SG distance fields
+    teeResult: "",
+    approachResult: "",
+    shortGameDist: "",
+    putt1: "",
+    putt2: "",
   }));
 
 const defaultRound = (course) => ({
@@ -239,18 +246,30 @@ function sgCalcRound(round, benchmarkHcp = 0) {
     const putts = parseInt(hole.putts, 10);
     const girHit = hole.gir === true;
     const fhHit  = hole.fh === true;
+    // ── SG: Putting ─────────────────────────────────────────────────────────
     if (!isNaN(putts)) {
-      const firstPuttFt = hole.distToPin ? hole.distToPin * 3 : girHit ? 25 : 10;
+      // putt1 (precision) → distToPin (legacy) → statistical fallback
+      const firstPuttFt = (hole.putt1 !== "" && hole.putt1 !== undefined)
+        ? +hole.putt1 * 3
+        : hole.distToPin ? hole.distToPin * 3
+        : girHit ? 25 : 10;
       const expectedPutts = sgGetExpected({ distFeet: firstPuttFt, lie: 'green', benchmarkHcp });
       sgPutting += expectedPutts - putts;
     }
+    // ── SG: Around-the-Green ────────────────────────────────────────────────
     if (!girHit && par >= 4) {
       if (hole.upAndDown === true)  sgAroundGreen += 0.50;
       if (hole.upAndDown === false) sgAroundGreen -= 0.35;
     }
+    // ── SG: Approach ────────────────────────────────────────────────────────
     if (par >= 4) {
-      if (hole.distToPin !== undefined && hole.distToPin !== '') {
-        const endDistFt = +hole.distToPin * 3;
+      // shortGameDist (precision) → distToPin (legacy) → statistical fallback
+      const approachEndYds = (hole.shortGameDist !== "" && hole.shortGameDist !== undefined)
+        ? +hole.shortGameDist
+        : (hole.distToPin !== undefined && hole.distToPin !== '') ? +hole.distToPin
+        : null;
+      if (approachEndYds !== null) {
+        const endDistFt = approachEndYds * 3;
         const approachEndE = sgGetExpected({ distFeet: endDistFt, lie: 'green', benchmarkHcp });
         const benchmarkProximityFt = girHit ? 25 : 45;
         const benchmarkEndE = sgGetExpected({ distFeet: benchmarkProximityFt, lie: 'green', benchmarkHcp });
@@ -260,10 +279,16 @@ function sgCalcRound(round, benchmarkHcp = 0) {
         if (!girHit && benchmarkGirRate > 0.01) sgApproach -= benchmarkGirRate * 0.45;
       }
     }
+    // ── SG: Off-the-Tee ─────────────────────────────────────────────────────
     if (par >= 4) {
-      if (hole.teeDistToPin !== undefined && hole.teeDistToPin !== '') {
+      // teeResult (precision) → teeDistToPin (legacy) → statistical fallback
+      const teeResultYds = (hole.teeResult !== "" && hole.teeResult !== undefined)
+        ? +hole.teeResult
+        : (hole.teeDistToPin !== undefined && hole.teeDistToPin !== '') ? +hole.teeDistToPin
+        : null;
+      if (teeResultYds !== null) {
         const teeEndLie = fhHit ? 'fairway' : 'rough';
-        const teeEndE = sgGetExpected({ distYards: +hole.teeDistToPin, lie: teeEndLie, benchmarkHcp });
+        const teeEndE = sgGetExpected({ distYards: teeResultYds, lie: teeEndLie, benchmarkHcp });
         const benchmarkTeeDistYds = Math.max(50, 170 + benchmarkHcp * -2.5);
         const benchmarkTeeEndE = sgGetExpected({ distYards: benchmarkTeeDistYds, lie: 'fairway', benchmarkHcp });
         sgOffTee += benchmarkTeeEndE - teeEndE;
@@ -529,7 +554,7 @@ function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, cou
 }
 
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
-function Dashboard({ rounds, courses }) {
+function Dashboard({ rounds, courses, sgMode = false }) {
   const [mode, setMode] = useState("basic");
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
@@ -658,7 +683,7 @@ function Dashboard({ rounds, courses }) {
       </FilterBar>
 
       {/* ── Advanced: Strokes Gained Dashboard ───────────────────────────── */}
-      {mode === "advanced" && <AdvancedDashboard filteredRounds={filteredRounds} noData={noData} />}
+      {mode === "advanced" && <AdvancedDashboard filteredRounds={filteredRounds} noData={noData} sgMode={sgMode} />}
 
       {/* ── Basic stats (hidden in advanced mode) ────────────────────────── */}
       {mode === "basic" && (noData ? (
@@ -1060,7 +1085,7 @@ function SGCategoryCard({ label, value, icon, roundValues = [] }) {
   );
 }
 
-function AdvancedDashboard({ filteredRounds, noData }) {
+function AdvancedDashboard({ filteredRounds, noData, sgMode = false }) {
   const [benchmarkHcp, setBenchmarkHcp] = useState(0);
   const [sgDropdownOpen, setSgDropdownOpen] = useState(false);
 
@@ -1146,6 +1171,27 @@ function AdvancedDashboard({ filteredRounds, noData }) {
         </span>
       </div>
 
+      {/* ── Precision vs estimated banner ─────────────────────────────────── */}
+      {!sgMode ? (
+        <div style={{ background: "#fffbea", border: `1px solid ${C.yellow}`, borderRadius: 12, padding: "12px 18px", display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ fontSize: 16 }}>📊</span>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: C.text }}>Estimated SG — based on binary flags</div>
+              <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>GIR, FH, and Up&Down are used to estimate strokes gained. Enable Precision SG in ⚙️ Settings to log distances for accurate per-shot values.</div>
+            </div>
+          </div>
+          <span style={{ fontSize: 11, fontWeight: 700, color: C.yellow, background: "#fef3cd", borderRadius: 6, padding: "3px 8px", flexShrink: 0 }}>ESTIMATED</span>
+        </div>
+      ) : (
+        <div style={{ background: C.accentLight, border: `1px solid ${C.accentMid}`, borderRadius: 12, padding: "10px 18px", display: "flex", alignItems: "center", gap: 10 }}>
+          <span style={{ fontSize: 14 }}>✓</span>
+          <div style={{ fontSize: 12, color: C.accent }}>
+            <strong>Precision SG active.</strong> Holes with distances logged use exact calculations. Holes without fall back to flag-based estimation.
+          </div>
+        </div>
+      )}
+
       {/* ── Total SG hero ──────────────────────────────────────────────────── */}
       <div style={{ background: avgTotal >= 0 ? C.accent : C.red, borderRadius: 18, padding: "28px 32px", display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 16 }}>
         <div>
@@ -1153,7 +1199,7 @@ function AdvancedDashboard({ filteredRounds, noData }) {
           <div style={{ fontFamily: "'DM Mono', monospace", fontSize: 52, fontWeight: 700, color: "#fff", lineHeight: 1 }}>
             {avgTotal >= 0 ? "+" : ""}{avgTotal.toFixed(2)}
           </div>
-          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 6 }}>avg over {roundSGs.length} round{roundSGs.length !== 1 ? "s" : ""}</div>
+          <div style={{ fontSize: 13, color: "rgba(255,255,255,0.65)", marginTop: 6 }}>avg over {roundSGs.length} round{roundSGs.length !== 1 ? "s" : ""}{!sgMode ? " · estimated" : ""}</div>
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ background: "rgba(255,255,255,0.15)", borderRadius: 12, padding: "10px 18px", display: "flex", gap: 18 }}>
@@ -1373,7 +1419,11 @@ function AdvancedDashboard({ filteredRounds, noData }) {
             <div style={{ background: "#fffbea", border: `1px solid ${C.yellow}`, borderRadius: 10, padding: "12px 16px" }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: C.yellow, marginBottom: 5, letterSpacing: "0.04em" }}>⚠️ Data Quality Note</div>
               <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
-                Without <strong style={{ color: C.text }}>distToPin</strong> and <strong style={{ color: C.text }}>teeDistToPin</strong> fields logged per hole, SG is estimated from binary flags (GIR, FH, Up&Down). Results are directionally accurate but less precise than shot-level data. Log distances per hole for higher-confidence SG numbers.
+                {sgMode ? (
+                  <>Precision SG is active. Holes where you logged distances use exact calculations. Any holes missing distances fall back to flag-based estimation (GIR, FH, Up&amp;Down). The more holes you complete, the more accurate your SG becomes.</>
+                ) : (
+                  <>Without distance data, SG is estimated from binary flags (GIR, FH, Up&amp;Down). Results are directionally accurate but imprecise. Enable <strong style={{ color: C.text }}>Precision SG Tracking</strong> in ⚙️ Settings to unlock distance fields in Log Round.</>
+                )}
               </div>
             </div>
 
@@ -1393,6 +1443,7 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
   const [handicap, setHandicap] = useState(existing.handicap ?? "");
   const [homeState, setHomeState] = useState(existing.home_state || "");
   const [handedness, setHandedness] = useState(existing.handedness || "");
+  const [sgMode, setSgMode] = useState(existing.sg_mode || false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
@@ -1407,6 +1458,7 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
       handicap: handicap !== "" ? +handicap : null,
       home_state: homeState || null,
       handedness: handedness || null,
+      sg_mode: sgMode,
     }, token);
     await loadProfiles().then(onProfileUpdated);
     setSaving(false); setSaved(true);
@@ -1467,6 +1519,43 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
                 <option value="left">Left</option>
               </select>
             </div>
+          </div>
+
+          {/* ── Precision SG Toggle ── */}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14 }}>
+            <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 16 }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: C.text, marginBottom: 3 }}>Precision SG Tracking</div>
+                <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.55 }}>
+                  Unlocks distance fields (yards to pin) in the Log Round scorecard for accurate Strokes Gained calculations. Adds 5 optional fields per hole.
+                </div>
+              </div>
+              <button
+                onClick={() => setSgMode(v => !v)}
+                style={{
+                  flexShrink: 0,
+                  width: 44, height: 24, borderRadius: 12,
+                  background: sgMode ? C.accent : C.border,
+                  border: "none", cursor: "pointer",
+                  position: "relative", transition: "background 0.2s",
+                }}
+              >
+                <span style={{
+                  position: "absolute", top: 2,
+                  left: sgMode ? 22 : 2,
+                  width: 20, height: 20, borderRadius: "50%",
+                  background: "#fff",
+                  boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+                  transition: "left 0.2s",
+                  display: "block",
+                }} />
+              </button>
+            </div>
+            {sgMode && (
+              <div style={{ marginTop: 10, background: C.accentLight, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: C.accent }}>
+                ✓ Active — distance fields will appear in Log Round after you enter your score and flags for each hole.
+              </div>
+            )}
           </div>
 
           {error && <div style={{ fontSize: 13, color: C.red, background: "#fdf0ef", borderRadius: 8, padding: "8px 12px" }}>{error}</div>}
@@ -1916,7 +2005,7 @@ function ClubSelect({ value, onChange, placeholder = "—" }) {
 }
 
 // ── SCORECARD ENTRY ──────────────────────────────────────────────────────────
-function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
+function ScorecardEntry({ onSave, onUpdate, editingRound, courses, sgMode = false }) {
   const [round, setRound] = useState(() => editingRound ? JSON.parse(JSON.stringify(editingRound)) : defaultRound());
   const [saved, setSaved] = useState(false);
 
@@ -1994,6 +2083,26 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
         </div>
       </div>
 
+      {/* ── SG mode indicator banner ─────────────────────────────────────── */}
+      {sgMode && (
+        <div style={{ background: C.accentLight, border: `1px solid ${C.accentMid}`, borderRadius: 12, padding: "12px 18px", display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <span style={{ fontSize: 18, flexShrink: 0 }}>📍</span>
+          <div>
+            <div style={{ fontSize: 13, fontWeight: 700, color: C.accent, marginBottom: 3 }}>Precision SG Mode — Distance Tracking Active</div>
+            <div style={{ fontSize: 12, color: C.muted, lineHeight: 1.6 }}>
+              After entering your score and flags for each hole, a green <strong style={{ color: C.accent }}>📍 SG</strong> row will appear below it with contextual distance fields. All distances are in <strong>yards</strong>. Fields are optional — holes without distances fall back to estimated SG.
+            </div>
+            <div style={{ marginTop: 8, display: "flex", gap: 16, flexWrap: "wrap", fontSize: 11, color: C.muted }}>
+              <span>🏌️ <strong>After Tee</strong> — yards to pin after your drive (Par 4/5)</span>
+              <span>⛳ <strong>After 2nd</strong> — yards to pin after 2nd shot (Par 5)</span>
+              <span>🌿 <strong>Chip from</strong> — yards to pin for your chip/pitch (missed GIR)</span>
+              <span>🎯 <strong>Putt 1</strong> — distance of first putt in yards</span>
+              <span>🔁 <strong>Putt 2</strong> — only appears on 3-putt holes</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div style={{ overflowX: "auto", width: "100%" }}>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
           <thead>
@@ -2067,6 +2176,68 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
                 </tr>
               );
 
+              // ── Precision SG distance row (only when sgMode is on) ─────────────────
+              // Shown after the hole row, contextually based on par + flags already set
+              const hasSomeFlag = h.score !== "" || h.gir !== null || h.fh !== null || h.putts !== "";
+              const isP5 = h.par === 5;
+              const girMissed = h.gir === false;
+              const showPutt2 = h.putts !== "" && +h.putts >= 3;
+              const distInput = (field, label, placeholder = "yds", color = C.muted) => (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 3, minWidth: 58 }}>
+                  <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color }}>{label}</span>
+                  <input
+                    type="number" min={0} max={999} value={h[field] ?? ""}
+                    onChange={e => setField(i, field, e.target.value)}
+                    placeholder={placeholder}
+                    style={{
+                      width: 52, textAlign: "center",
+                      border: `1.5px solid ${h[field] ? C.accent : C.border}`,
+                      borderRadius: 7, padding: "4px 2px",
+                      fontSize: 12, fontWeight: h[field] ? 700 : 400,
+                      color: h[field] ? C.accent : C.muted,
+                      background: h[field] ? C.accentLight : "transparent",
+                      outline: "none", fontFamily: "'DM Mono', monospace",
+                    }}
+                  />
+                </div>
+              );
+              const sgRow = sgMode && hasSomeFlag ? (
+                <tr key={`sg-${i}`} style={{ background: "#f5f9f7", borderBottom: `1px solid ${C.border}` }}>
+                  <td colSpan={12} style={{ padding: "6px 8px 8px 28px" }}>
+                    <div style={{ display: "flex", alignItems: "flex-end", gap: 10, flexWrap: "wrap" }}>
+                      <span style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: C.accentMid, paddingBottom: 4, flexShrink: 0 }}>📍 SG</span>
+                      {/* Tee result: par 4 & 5 only */}
+                      {h.par >= 4 && distInput("teeResult", "After Tee")}
+                      {/* 2nd shot result: par 5 only */}
+                      {isP5 && distInput("approachResult", "After 2nd")}
+                      {/* Short game: only when GIR missed */}
+                      {girMissed && distInput("shortGameDist", "Chip from", "yds", C.yellow)}
+                      {/* Putt 1: always */}
+                      {distInput("putt1", "Putt 1")}
+                      {/* Putt 2: only if 3-putt+ */}
+                      {showPutt2 && distInput("putt2", "Putt 2")}
+                      {/* Completion indicator */}
+                      {(() => {
+                        const needed = [
+                          h.par >= 4 ? "teeResult" : null,
+                          isP5 ? "approachResult" : null,
+                          girMissed ? "shortGameDist" : null,
+                          "putt1",
+                          showPutt2 ? "putt2" : null,
+                        ].filter(Boolean);
+                        const filled = needed.filter(f => h[f] !== "" && h[f] !== undefined && h[f] !== null).length;
+                        const allFilled = filled === needed.length && needed.length > 0;
+                        return (
+                          <span style={{ fontSize: 10, color: allFilled ? C.accentMid : C.muted, paddingBottom: 4, fontWeight: allFilled ? 700 : 400 }}>
+                            {allFilled ? "✓ complete" : `${filled}/${needed.length}`}
+                          </span>
+                        );
+                      })()}
+                    </div>
+                  </td>
+                </tr>
+              ) : null;
+
               // After hole 9: insert front-9 summary row
               if (i === 8) {
                 const f9 = round.holes.slice(0, 9);
@@ -2080,7 +2251,7 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
                 const f9UDH   = f9.filter(h => h.upAndDown !== null && h.upAndDown !== "na");
                 const f9UD    = f9UDH.length ? `${f9UDH.filter(h => h.upAndDown === true).length}/${f9UDH.length} U&D` : null;
                 const f9Col   = f9Rel > 0 ? C.red : f9Rel < 0 ? C.accentMid : C.text;
-                return [holeRow, (
+                return [holeRow, sgRow, (
                   <tr key="summary-front" style={{ background: C.accentLight, borderTop: `2px solid ${C.accentMid}`, borderBottom: `2px solid ${C.accentMid}` }}>
                     <td colSpan={12} style={{ padding: "8px 12px" }}>
                       <div style={{ display: "flex", alignItems: "center", width: "60%", minWidth: 380 }}>
@@ -2097,7 +2268,7 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses }) {
                   </tr>
                 )];
               }
-              return holeRow;
+              return [holeRow, sgRow].filter(Boolean);
             })}
 
             {/* Back 9 summary after hole 18 */}
@@ -2569,8 +2740,8 @@ export default function GolfTracker() {
           <div style={{ padding: 40, color: C.muted }}>Loading…</div>
         ) : session && tab !== "leaderboard" ? (
           <>
-            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} />}
-            {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
+            {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} />}
+            {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
           </>
