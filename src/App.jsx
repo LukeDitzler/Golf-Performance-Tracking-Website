@@ -675,141 +675,6 @@ function Dashboard({ rounds, courses }) {
         <StatCard label="Up & Down %" value={udHoles.length ? `${udPct}%` : "—"} sub={udHoles.length ? `${udHit}/${udHoles.length}` : "no data"} />
       </div>
 
-      {/* ── Fairway (40%) + Scoring (40%) + Recent Rounds (20%) ─────────── */}
-      {(() => {
-        // Fairway data
-        const total = fhHoles.length;
-        const leftPct  = total ? Math.round(fhLeft / total * 100) : 0;
-        const hitPct   = total ? Math.round(fhHit  / total * 100) : 0;
-        const rightPct = total ? Math.round(fhRight / total * 100) : 0;
-
-        // Fairway half-donut arc helper
-        const FW = 140, FH = 80, fcx = FW / 2, fcy = FH, fr = 68, fri = 42;
-        const toRad = d => (d - 90) * Math.PI / 180;
-        const halfArc = (s0, s1, ro, ri) => {
-          const s = toRad(s0), e = toRad(s1);
-          const x1 = fcx + ro * Math.cos(s), y1 = fcy + ro * Math.sin(s);
-          const x2 = fcx + ro * Math.cos(e), y2 = fcy + ro * Math.sin(e);
-          const x3 = fcx + ri * Math.cos(e), y3 = fcy + ri * Math.sin(e);
-          const x4 = fcx + ri * Math.cos(s), y4 = fcy + ri * Math.sin(s);
-          return `M${x1},${y1} A${ro},${ro} 0 0 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 0 0 ${x4},${y4} Z`;
-        };
-        const g = 1.5;
-        const fa0 = -90, fa1 = fa0 + leftPct * 1.8, fa2 = fa1 + hitPct * 1.8, fa3 = fa2 + rightPct * 1.8;
-
-        // Scoring donut data
-        const scoringData = [
-          { label: "Birdie+",  count: birdieOrBetter, color: C.accentMid },
-          { label: "Par",      count: pars,            color: C.accent },
-          { label: "Bogey",    count: bogeys,          color: C.yellow },
-          { label: "Double+",  count: doubles,         color: C.red },
-        ];
-        const parOrBetterPct = totalHoles ? Math.round((birdieOrBetter + pars) / totalHoles * 100) : 0;
-        const DS = 130, dcx = DS / 2, dcy = DS / 2, dr = 57, dri = 37;
-        const fullArc = (s0, s1, ro, ri) => {
-          const s = toRad(s0), e = toRad(s1);
-          const x1 = dcx + ro * Math.cos(s), y1 = dcy + ro * Math.sin(s);
-          const x2 = dcx + ro * Math.cos(e), y2 = dcy + ro * Math.sin(e);
-          const x3 = dcx + ri * Math.cos(e), y3 = dcy + ri * Math.sin(e);
-          const x4 = dcx + ri * Math.cos(s), y4 = dcy + ri * Math.sin(s);
-          const lg = (s1 - s0) > 180 ? 1 : 0;
-          return `M${x1},${y1} A${ro},${ro} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${lg} 0 ${x4},${y4} Z`;
-        };
-        let cursor = 0;
-        const segments = scoringData.map(({ label, count, color }) => {
-          const sweep = totalHoles ? (count / totalHoles) * 360 : 0;
-          const start = cursor; cursor += sweep;
-          return { label, pct: totalHoles ? Math.round(count / totalHoles * 100) : 0, color, start, sweep };
-        });
-
-        // Determine grid columns — always show scoring; fairway only if data exists
-        const showFairway = fhHoles.length > 0;
-        const showRecent  = roundStats.length > 0;
-        const cols = showFairway
-          ? (showRecent ? "2fr 2fr 1fr" : "1fr 1fr")
-          : (showRecent ? "2fr 1fr" : "1fr");
-
-        return (
-          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "stretch" }}>
-
-            {/* Fairway Distribution */}
-            {showFairway && (
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Fairway Distribution</div>
-                <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
-                  <svg width={FW} height={FH} viewBox={`0 0 ${FW} ${FH}`} style={{ overflow: "visible", flexShrink: 0 }}>
-                    <path d={halfArc(-90, 90, fr, fri)} fill={C.border} />
-                    {leftPct  > 0.5 && <path d={halfArc(fa0 + g/2, fa1 - g/2, fr, fri)} fill={C.yellow} />}
-                    {hitPct   > 0.5 && <path d={halfArc(fa1 + g/2, fa2 - g/2, fr, fri)} fill={C.accentMid} />}
-                    {rightPct > 0.5 && <path d={halfArc(fa2 + g/2, fa3 - g/2, fr, fri)} fill={C.yellow} />}
-                  </svg>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
-                    {[
-                      { label: "Left miss",   pct: leftPct,  color: C.yellow },
-                      { label: "Hit fairway", pct: hitPct,   color: C.accentMid },
-                      { label: "Right miss",  pct: rightPct, color: C.yellow },
-                    ].map(({ label, pct, color }) => (
-                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
-                        <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
-                        <span style={{ fontSize: 17, fontWeight: 700, color: label === "Hit fairway" ? C.accent : C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Scoring Distribution */}
-            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Scoring Distribution</div>
-              <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
-                <svg width={DS} height={DS} viewBox={`0 0 ${DS} ${DS}`} style={{ flexShrink: 0 }}>
-                  {segments.map(({ label, sweep, start, color }) =>
-                    sweep > 0.5 ? <path key={label} d={fullArc(start + 1, start + sweep - 1, dr, dri)} fill={color} /> : null
-                  )}
-                  <text x={dcx} y={dcy - 6}  textAnchor="middle" fontSize="15" fontWeight="700" fill={C.accent} fontFamily="'DM Mono', monospace">{parOrBetterPct}%</text>
-                  <text x={dcx} y={dcy + 7}  textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">par or</text>
-                  <text x={dcx} y={dcy + 17} textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">better</text>
-                </svg>
-                <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
-                  {segments.map(({ label, pct, color }) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
-                      <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
-                      <span style={{ fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-
-            {/* Recent Rounds — compact, 20% column */}
-            {showRecent && (
-              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 10 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Recent Rounds</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
-                  {[...roundStats].reverse().map((r, i) => {
-                    const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
-                    const relStr = r.rel >= 0 ? `+${r.rel}` : `${r.rel}`;
-                    return (
-                      <div key={i} style={{ display: "flex", flexDirection: "column", gap: 1, paddingBottom: 8, borderBottom: i < roundStats.length - 1 ? `1px solid ${C.border}` : "none" }}>
-                        <div style={{ fontSize: 11, color: C.muted }}>{r.date}</div>
-                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.course || "—"}</div>
-                        <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: col, fontSize: 14 }}>
-                          {r.total} <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>({relStr})</span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            )}
-
-          </div>
-        );
-      })()}
-
       {/* ── Club Performance with group subtotals ────────────────────────── */}
       {clubStats.length > 0 && (() => {
         const GROUPS = [
@@ -888,9 +753,9 @@ function Dashboard({ rounds, courses }) {
         if (!hasGIR && !hasPutts) return null;
 
         return (
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
 
-            {/* Score vs GIR */}
+            {/* Score vs GIR — full width */}
             {hasGIR && (
               <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Score vs GIR</div>
@@ -925,11 +790,11 @@ function Dashboard({ rounds, courses }) {
               </div>
             )}
 
-            {/* Putts by GIR */}
+            {/* Putts by GIR — full width */}
             {hasPutts && (
               <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 24 }}>
                 <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted, marginBottom: 16 }}>Putts by GIR</div>
-                <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ display: "grid", gridTemplateColumns: `repeat(${puttPanels.length}, 1fr)`, gap: 12 }}>
                   {puttPanels.map(({ label, holes }) => {
                     const avg = (holes.reduce((s, h) => s + +h.putts, 0) / holes.length).toFixed(2);
                     const one   = holes.filter(h => +h.putts === 1).length;
@@ -1021,11 +886,131 @@ function Dashboard({ rounds, courses }) {
           </div>
         );
       })()}
+
+      {/* ── Fairway Distribution + Scoring Distribution + Recent Rounds ─── */}
+      {(() => {
+        const total = fhHoles.length;
+        const leftPct  = total ? Math.round(fhLeft / total * 100) : 0;
+        const hitPct   = total ? Math.round(fhHit  / total * 100) : 0;
+        const rightPct = total ? Math.round(fhRight / total * 100) : 0;
+        const FW = 140, FH = 80, fcx = FW / 2, fcy = FH, fr = 68, fri = 42;
+        const toRad = d => (d - 90) * Math.PI / 180;
+        const halfArc = (s0, s1, ro, ri) => {
+          const s = toRad(s0), e = toRad(s1);
+          const x1 = fcx + ro * Math.cos(s), y1 = fcy + ro * Math.sin(s);
+          const x2 = fcx + ro * Math.cos(e), y2 = fcy + ro * Math.sin(e);
+          const x3 = fcx + ri * Math.cos(e), y3 = fcy + ri * Math.sin(e);
+          const x4 = fcx + ri * Math.cos(s), y4 = fcy + ri * Math.sin(s);
+          return `M${x1},${y1} A${ro},${ro} 0 0 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 0 0 ${x4},${y4} Z`;
+        };
+        const g = 1.5;
+        const fa0 = -90, fa1 = fa0 + leftPct * 1.8, fa2 = fa1 + hitPct * 1.8, fa3 = fa2 + rightPct * 1.8;
+        const scoringData = [
+          { label: "Birdie+",  count: birdieOrBetter, color: C.accentMid },
+          { label: "Par",      count: pars,            color: C.accent },
+          { label: "Bogey",    count: bogeys,          color: C.yellow },
+          { label: "Double+",  count: doubles,         color: C.red },
+        ];
+        const parOrBetterPct = totalHoles ? Math.round((birdieOrBetter + pars) / totalHoles * 100) : 0;
+        const DS = 130, dcx = DS / 2, dcy = DS / 2, dr = 57, dri = 37;
+        const fullArc = (s0, s1, ro, ri) => {
+          const s = toRad(s0), e = toRad(s1);
+          const x1 = dcx + ro * Math.cos(s), y1 = dcy + ro * Math.sin(s);
+          const x2 = dcx + ro * Math.cos(e), y2 = dcy + ro * Math.sin(e);
+          const x3 = dcx + ri * Math.cos(e), y3 = dcy + ri * Math.sin(e);
+          const x4 = dcx + ri * Math.cos(s), y4 = dcy + ri * Math.sin(s);
+          const lg = (s1 - s0) > 180 ? 1 : 0;
+          return `M${x1},${y1} A${ro},${ro} 0 ${lg} 1 ${x2},${y2} L${x3},${y3} A${ri},${ri} 0 ${lg} 0 ${x4},${y4} Z`;
+        };
+        let cursor = 0;
+        const segments = scoringData.map(({ label, count, color }) => {
+          const sweep = totalHoles ? (count / totalHoles) * 360 : 0;
+          const start = cursor; cursor += sweep;
+          return { label, pct: totalHoles ? Math.round(count / totalHoles * 100) : 0, color, start, sweep };
+        });
+        const showFairway = fhHoles.length > 0;
+        const showRecent  = roundStats.length > 0;
+        const cols = showFairway
+          ? (showRecent ? "2fr 2fr 1fr" : "1fr 1fr")
+          : (showRecent ? "2fr 1fr" : "1fr");
+        return (
+          <div style={{ display: "grid", gridTemplateColumns: cols, gap: 12, alignItems: "stretch" }}>
+            {showFairway && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Fairway Distribution</div>
+                <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+                  <svg width={FW} height={FH} viewBox={`0 0 ${FW} ${FH}`} style={{ overflow: "visible", flexShrink: 0 }}>
+                    <path d={halfArc(-90, 90, fr, fri)} fill={C.border} />
+                    {leftPct  > 0.5 && <path d={halfArc(fa0 + g/2, fa1 - g/2, fr, fri)} fill={C.yellow} />}
+                    {hitPct   > 0.5 && <path d={halfArc(fa1 + g/2, fa2 - g/2, fr, fri)} fill={C.accentMid} />}
+                    {rightPct > 0.5 && <path d={halfArc(fa2 + g/2, fa3 - g/2, fr, fri)} fill={C.yellow} />}
+                  </svg>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
+                    {[
+                      { label: "Left miss",   pct: leftPct,  color: C.yellow },
+                      { label: "Hit fairway", pct: hitPct,   color: C.accentMid },
+                      { label: "Right miss",  pct: rightPct, color: C.yellow },
+                    ].map(({ label, pct, color }) => (
+                      <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
+                        <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
+                        <span style={{ fontSize: 17, fontWeight: 700, color: label === "Hit fairway" ? C.accent : C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            )}
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Scoring Distribution</div>
+              <div style={{ display: "flex", alignItems: "center", gap: 14, flex: 1 }}>
+                <svg width={DS} height={DS} viewBox={`0 0 ${DS} ${DS}`} style={{ flexShrink: 0 }}>
+                  {segments.map(({ label, sweep, start, color }) =>
+                    sweep > 0.5 ? <path key={label} d={fullArc(start + 1, start + sweep - 1, dr, dri)} fill={color} /> : null
+                  )}
+                  <text x={dcx} y={dcy - 6}  textAnchor="middle" fontSize="15" fontWeight="700" fill={C.accent} fontFamily="'DM Mono', monospace">{parOrBetterPct}%</text>
+                  <text x={dcx} y={dcy + 7}  textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">par or</text>
+                  <text x={dcx} y={dcy + 17} textAnchor="middle" fontSize="8.5" fill={C.muted} fontFamily="Georgia">better</text>
+                </svg>
+                <div style={{ display: "flex", flexDirection: "column", gap: 9, flex: 1 }}>
+                  {segments.map(({ label, pct, color }) => (
+                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ width: 9, height: 9, borderRadius: 2, background: color, flexShrink: 0 }} />
+                      <span style={{ fontSize: 12, color: C.muted, flex: 1 }}>{label}</span>
+                      <span style={{ fontSize: 17, fontWeight: 700, color: C.text, fontFamily: "'DM Mono', monospace" }}>{pct}%</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+            {showRecent && (
+              <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 10 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, letterSpacing: "0.08em", textTransform: "uppercase", color: C.muted }}>Recent Rounds</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1 }}>
+                  {[...roundStats].reverse().map((r, i) => {
+                    const col = r.rel <= 0 ? C.accentMid : r.rel <= 5 ? C.yellow : C.red;
+                    const relStr = r.rel >= 0 ? `+${r.rel}` : `${r.rel}`;
+                    return (
+                      <div key={i} style={{ display: "flex", flexDirection: "column", gap: 1, paddingBottom: 8, borderBottom: i < roundStats.length - 1 ? `1px solid ${C.border}` : "none" }}>
+                        <div style={{ fontSize: 11, color: C.muted }}>{r.date}</div>
+                        <div style={{ fontSize: 12, color: C.text, fontWeight: 500, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{r.course || "—"}</div>
+                        <div style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: col, fontSize: 14 }}>
+                          {r.total} <span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}>({relStr})</span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        );
+      })()}
+
       </>))}
     </div>
   );
 }
-
 // ── ADVANCED DASHBOARD (Strokes Gained) ──────────────────────────────────────
 function SGBar({ value, maxAbs = 3 }) {
   const pct = Math.min(Math.abs(value) / maxAbs * 50, 50);
@@ -2486,7 +2471,6 @@ export default function GolfTracker() {
   const tabs = [
     { id: "dashboard", label: "Dashboard" },
     { id: "leaderboard", label: "Leaderboard" },
-    { id: "log", label: "Log Round" },
     { id: "history", label: "History" },
     { id: "courses", label: "Courses" },
   ];
@@ -2536,6 +2520,15 @@ export default function GolfTracker() {
           ))}
           {session ? (
             <div style={{ display: "flex", gap: 6, alignItems: "center" }}>
+              <button onClick={() => { setTab("log"); setEditingRound(null); }} style={{
+                background: tab === "log" ? C.accent : C.accent,
+                border: "none",
+                color: "#fff",
+                borderRadius: 8, padding: "6px 14px", fontSize: 13, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+                display: "flex", alignItems: "center", gap: 6,
+                boxShadow: "0 1px 4px rgba(45,106,79,0.25)",
+              }}>＋ Log Round</button>
               <button onClick={() => setShowSettings(true)} title="Profile settings" style={{
                 background: "transparent", border: `1px solid ${C.border}`,
                 color: C.muted, borderRadius: 8, padding: "6px 10px",
