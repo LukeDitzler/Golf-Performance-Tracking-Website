@@ -597,7 +597,6 @@ function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, cou
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ rounds, courses, sgMode = false, userHandicap = null }) {
   const [mode, setMode] = useState("basic");
-  const [lbMode, setLbMode] = useState("season"); // "season" | "stats"
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [courseFilter, setCourseFilter] = useState("all");
@@ -1607,6 +1606,7 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
 
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
 function Leaderboard({ rounds, courses, profiles, userId, matches = [], onDeleteMatch }) {
+  const [lbMode, setLbMode] = useState("season"); // "season" | "stats"
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [courseFilter, setCourseFilter] = useState("all");
