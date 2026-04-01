@@ -60,6 +60,38 @@ const defaultCourse = () => ({
 // ── Storage helpers ───────────────────────────────────────────────────────────
 const API = "/api/data";
 const COURSES_API = "/api/courses";
+const MATCHES_API = "/api/matches";
+
+// Matches — shared across all users (public leaderboard data)
+async function loadMatches() {
+  try {
+    const res = await fetch(MATCHES_API);
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch { return []; }
+}
+
+async function saveMatches(matches, token) {
+  try {
+    const res = await fetch(MATCHES_API, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ matches }),
+    });
+    if (!res.ok) throw new Error();
+    return await res.json();
+  } catch (err) { console.error("Could not save matches:", err); return []; }
+}
+
+async function deleteMatch(id, token) {
+  try {
+    await fetch(MATCHES_API, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${token}` },
+      body: JSON.stringify({ id }),
+    });
+  } catch (err) { console.error("Could not delete match:", err); }
+}
 
 // Rounds — still stored per-user in golf_data
 async function loadRounds(token) {
@@ -565,6 +597,7 @@ function FilterBar({ timeFilter, setTimeFilter, stateFilter, setStateFilter, cou
 // ── DASHBOARD ────────────────────────────────────────────────────────────────
 function Dashboard({ rounds, courses, sgMode = false, userHandicap = null }) {
   const [mode, setMode] = useState("basic");
+  const [lbMode, setLbMode] = useState("season"); // "season" | "stats"
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [courseFilter, setCourseFilter] = useState("all");
@@ -1573,7 +1606,7 @@ function SettingsModal({ onClose, userId, token, profiles, onProfileUpdated }) {
 }
 
 // ── LEADERBOARD ───────────────────────────────────────────────────────────────
-function Leaderboard({ rounds, courses, profiles, userId }) {
+function Leaderboard({ rounds, courses, profiles, userId, matches = [], onDeleteMatch }) {
   const [timeFilter, setTimeFilter] = useState("all");
   const [stateFilter, setStateFilter] = useState("all");
   const [courseFilter, setCourseFilter] = useState("all");
@@ -1671,8 +1704,67 @@ function Leaderboard({ rounds, courses, profiles, userId }) {
     );
   };
 
+  // ── Season standings computed from matches ─────────────────────────────────
+  const playerIds = [...new Set(matches.flatMap(m => [m.giver_id, m.receiver_id]))];
+  const activePlayers = profiles.filter(p => playerIds.includes(p.id) && p.first_name);
+
+  const getRecord = (pid) => {
+    const myMatches = matches.filter(m => m.giver_id === pid || m.receiver_id === pid);
+    let W = 0, L = 0, D = 0, net = 0;
+    myMatches.forEach(m => {
+      const iAmGiver = m.giver_id === pid;
+      const won = (iAmGiver && m.result === "giver") || (!iAmGiver && m.result === "receiver");
+      const lost = (iAmGiver && m.result === "receiver") || (!iAmGiver && m.result === "giver");
+      if (won) { W++; net += m.stake; }
+      else if (lost) { L++; net -= m.stake; }
+      else D++;
+    });
+    const pts = W * 2 + D;
+    // last 5 form (most recent first)
+    const form = [...myMatches]
+      .sort((a, b) => new Date(b.round_date) - new Date(a.round_date))
+      .slice(0, 5)
+      .map(m => {
+        const iAmGiver = m.giver_id === pid;
+        const won = (iAmGiver && m.result === "giver") || (!iAmGiver && m.result === "receiver");
+        const lost = (iAmGiver && m.result === "receiver") || (!iAmGiver && m.result === "giver");
+        return won ? "W" : lost ? "L" : "D";
+      });
+    return { pid, W, L, D, pts, net, played: W+L+D, form };
+  };
+
+  const standings = activePlayers
+    .map(p => ({ ...p, ...getRecord(p.id) }))
+    .sort((a, b) => b.pts - a.pts || b.W - a.W || a.L - b.L);
+
+  // H2H record between two players
+  const h2h = (pidA, pidB) => {
+    const pair = matches.filter(m =>
+      (m.giver_id === pidA && m.receiver_id === pidB) ||
+      (m.giver_id === pidB && m.receiver_id === pidA)
+    );
+    let W = 0, L = 0, D = 0;
+    pair.forEach(m => {
+      const aWon = (m.giver_id === pidA && m.result === "giver") || (m.receiver_id === pidA && m.result === "receiver");
+      const aLost = (m.giver_id === pidA && m.result === "receiver") || (m.receiver_id === pidA && m.result === "giver");
+      if (aWon) W++;
+      else if (aLost) L++;
+      else D++;
+    });
+    return { W, L, D, played: W+L+D };
+  };
+
+  const pName = (p) => p ? `${p.first_name} ${p.last_name[0]}.` : "—";
+  const pNameFull = (p) => p ? `${p.first_name} ${p.last_name}` : "—";
+  const formDot = (r) => {
+    const col = r === "W" ? C.accentMid : r === "L" ? C.red : C.yellow;
+    return <span key={Math.random()} style={{ display: "inline-block", width: 8, height: 8, borderRadius: "50%", background: col, margin: "0 1px" }} />;
+  };
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Mode toggle in FilterBar ──────────────────────────────────────── */}
       <FilterBar
         timeFilter={timeFilter} setTimeFilter={setTimeFilter}
         stateFilter={stateFilter} setStateFilter={setStateFilter}
@@ -1681,25 +1773,207 @@ function Leaderboard({ rounds, courses, profiles, userId }) {
         totalRounds={null} activeFilterCount={activeFilterCount}
         onClear={() => { setTimeFilter("all"); setStateFilter("all"); setCourseFilter("all"); }}
       >
-        <div style={{ fontSize: 15, fontWeight: 700, color: C.text }}>Leaderboard</div>
+        <div style={{ display: "flex", background: C.bg, borderRadius: 12, padding: 3, gap: 2, border: `1px solid ${C.border}` }}>
+          {[{ id: "season", label: "Season" }, { id: "stats", label: "Stats" }].map(m => (
+            <button key={m.id} onClick={() => setLbMode(m.id)} style={{
+              padding: "6px 20px", borderRadius: 10, fontSize: 13, fontWeight: 700,
+              cursor: "pointer", border: "none", fontFamily: "inherit",
+              background: lbMode === m.id ? C.accent : "transparent",
+              color: lbMode === m.id ? "#fff" : C.muted,
+              transition: "all 0.18s",
+            }}>{m.label}</button>
+          ))}
+        </div>
       </FilterBar>
 
-      {profiles.length === 0 ? (
-        <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
-          <div style={{ fontSize: 36 }}>🏆</div>
-          <div style={{ marginTop: 10, fontSize: 15 }}>No players yet. Be the first to sign up.</div>
+      {/* ── SEASON MODE ──────────────────────────────────────────────────────── */}
+      {lbMode === "season" && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+          {matches.length === 0 ? (
+            <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+              <div style={{ fontSize: 40 }}>🏆</div>
+              <div style={{ marginTop: 12, fontSize: 15, fontWeight: 600, color: C.text }}>No matches yet</div>
+              <div style={{ marginTop: 6, fontSize: 13 }}>Log matches in the round scorecard to build the season standings.</div>
+            </div>
+          ) : (<>
+
+          {/* Standings table */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }}>🏆</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Season Standings</span>
+              <span style={{ fontSize: 12, color: C.muted, marginLeft: 4 }}>{matches.length} match{matches.length !== 1 ? "es" : ""} played</span>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+                <thead>
+                  <tr style={{ background: C.bg }}>
+                    {["#", "Player", "W", "L", "D", "Pts", "Net $", "Form"].map((h, hi) => (
+                      <th key={h} style={{ padding: "8px 14px", textAlign: hi < 2 ? "left" : "center", fontSize: 11, fontWeight: 700, letterSpacing: "0.07em", textTransform: "uppercase", color: C.muted, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {standings.map((p, i) => {
+                    const me = p.id === userId;
+                    const netCol = p.net > 0 ? C.accentMid : p.net < 0 ? C.red : C.muted;
+                    return (
+                      <tr key={p.id} style={{ borderBottom: `1px solid ${C.border}`, background: me ? C.accentLight : i % 2 === 0 ? "transparent" : "#fafaf8" }}>
+                        <td style={{ padding: "12px 14px", fontWeight: 700, color: C.muted, fontSize: 12 }}>
+                          {i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : i + 1}
+                        </td>
+                        <td style={{ padding: "12px 14px" }}>
+                          <div style={{ fontWeight: me ? 700 : 500, color: me ? C.accent : C.text }}>
+                            {pNameFull(p)}{me && <span style={{ fontSize: 11, color: C.accentMid, marginLeft: 6 }}>you</span>}
+                          </div>
+                          {p.handicap && <div style={{ fontSize: 11, color: C.muted }}>{p.handicap} HCP</div>}
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: C.accentMid }}>{p.W}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: p.L > 0 ? C.red : C.muted }}>{p.L}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "'DM Mono', monospace", color: C.muted }}>{p.D}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: C.text }}>{p.pts}</td>
+                        <td style={{ padding: "12px 14px", textAlign: "center", fontFamily: "'DM Mono', monospace", fontWeight: 700, color: netCol }}>
+                          {p.net >= 0 ? `+$${p.net}` : `-$${Math.abs(p.net)}`}
+                        </td>
+                        <td style={{ padding: "12px 14px", textAlign: "center" }}>
+                          <div style={{ display: "flex", gap: 2, justifyContent: "center", alignItems: "center" }}>
+                            {p.form.length > 0 ? p.form.map((r, fi) => formDot(r)) : <span style={{ fontSize: 11, color: C.muted }}>—</span>}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div style={{ padding: "10px 20px", fontSize: 11, color: C.muted, borderTop: `1px solid ${C.border}` }}>
+              Points: Win = 2 · Draw = 1 · Loss = 0 · Form = last 5 results
+            </div>
+          </div>
+
+          {/* H2H Matrix */}
+          {activePlayers.length >= 2 && (
+            <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+              <div style={{ padding: "18px 24px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+                <span style={{ fontSize: 18 }}>⚔️</span>
+                <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Head to Head</span>
+                <span style={{ fontSize: 12, color: C.muted }}>row beats column</span>
+              </div>
+              <div style={{ overflowX: "auto", padding: "0 0 4px" }}>
+                <table style={{ borderCollapse: "collapse", fontSize: 12, minWidth: "100%" }}>
+                  <thead>
+                    <tr>
+                      <th style={{ padding: "10px 16px", textAlign: "left", fontWeight: 600, color: C.muted, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Player</th>
+                      {activePlayers.map(p => (
+                        <th key={p.id} style={{ padding: "10px 12px", textAlign: "center", fontWeight: 600, color: p.id === userId ? C.accent : C.muted, fontSize: 11, borderBottom: `1px solid ${C.border}`, whiteSpace: "nowrap" }}>
+                          {pName(p)}
+                        </th>
+                      ))}
+                      <th style={{ padding: "10px 12px", textAlign: "center", fontWeight: 700, color: C.muted, fontSize: 11, borderBottom: `1px solid ${C.border}` }}>Overall</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {activePlayers.map((rowP, ri) => {
+                      const rec = getRecord(rowP.id);
+                      const me = rowP.id === userId;
+                      return (
+                        <tr key={rowP.id} style={{ borderBottom: `1px solid ${C.border}`, background: me ? C.accentLight : ri % 2 === 0 ? "transparent" : "#fafaf8" }}>
+                          <td style={{ padding: "10px 16px", fontWeight: me ? 700 : 500, color: me ? C.accent : C.text, whiteSpace: "nowrap" }}>
+                            {pNameFull(rowP)}{me && <span style={{ fontSize: 10, color: C.accentMid, marginLeft: 5 }}>you</span>}
+                          </td>
+                          {activePlayers.map((colP, ci) => {
+                            if (rowP.id === colP.id) {
+                              return <td key={colP.id} style={{ padding: "10px 12px", textAlign: "center", background: C.bg, color: C.border, fontSize: 16 }}>—</td>;
+                            }
+                            const r = h2h(rowP.id, colP.id);
+                            if (r.played === 0) {
+                              return <td key={colP.id} style={{ padding: "10px 12px", textAlign: "center", color: C.muted, fontSize: 11 }}>—</td>;
+                            }
+                            const winPct = r.W / r.played;
+                            const cellColor = winPct > 0.5 ? C.accentMid : winPct < 0.5 ? C.red : C.yellow;
+                            return (
+                              <td key={colP.id} style={{ padding: "10px 12px", textAlign: "center" }}>
+                                <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: cellColor, fontSize: 13 }}>
+                                  {r.W}-{r.L}{r.D > 0 ? `-${r.D}` : ""}
+                                </span>
+                              </td>
+                            );
+                          })}
+                          <td style={{ padding: "10px 12px", textAlign: "center" }}>
+                            <span style={{ fontFamily: "'DM Mono', monospace", fontWeight: 700, color: rec.W > rec.L ? C.accentMid : rec.W < rec.L ? C.red : C.yellow, fontSize: 13 }}>
+                              {rec.W}-{rec.L}{rec.D > 0 ? `-${rec.D}` : ""}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {/* Recent Matches log */}
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, overflow: "hidden" }}>
+            <div style={{ padding: "18px 24px 14px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ fontSize: 18 }}>📋</span>
+              <span style={{ fontSize: 14, fontWeight: 700, color: C.text }}>Recent Results</span>
+            </div>
+            <div style={{ display: "flex", flexDirection: "column" }}>
+              {[...matches].sort((a, b) => new Date(b.round_date) - new Date(a.round_date)).slice(0, 15).map((m, i) => {
+                const giver = profiles.find(p => p.id === m.giver_id);
+                const receiver = profiles.find(p => p.id === m.receiver_id);
+                const winnerColor = m.result === "giver" ? C.accentMid : m.result === "receiver" ? C.red : C.yellow;
+                const resultLabel = m.result === "draw" ? "Draw" : m.result === "giver" ? `${pNameFull(giver)} won` : `${pNameFull(receiver)} won`;
+                const myMatch = m.giver_id === userId || m.receiver_id === userId;
+                return (
+                  <div key={m.id} style={{ padding: "12px 20px", borderBottom: `1px solid ${C.border}`, display: "flex", alignItems: "center", gap: 12, background: myMatch ? C.accentLight : "transparent" }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                        <span style={{ fontWeight: 700, fontSize: 13, color: m.result === "giver" ? C.accentMid : C.text }}>{pNameFull(giver)}</span>
+                        <span style={{ fontSize: 11, color: C.muted, background: C.accentLight, borderRadius: 4, padding: "1px 6px", fontFamily: "'DM Mono', monospace" }}>-{m.strokes}</span>
+                        <span style={{ fontSize: 12, color: C.muted }}>vs</span>
+                        <span style={{ fontWeight: 700, fontSize: 13, color: m.result === "receiver" ? C.accentMid : C.text }}>{pNameFull(receiver)}</span>
+                      </div>
+                      <div style={{ fontSize: 11, color: C.muted, marginTop: 2 }}>{m.round_date}{m.course_name ? ` · ${m.course_name}` : ""}</div>
+                    </div>
+                    <div style={{ textAlign: "right", flexShrink: 0 }}>
+                      <div style={{ fontWeight: 700, fontSize: 12, color: winnerColor }}>{resultLabel}</div>
+                      <div style={{ fontSize: 11, color: C.muted }}>${m.stake}</div>
+                    </div>
+                    {(m.logged_by === userId) && onDeleteMatch && (
+                      <button onClick={() => onDeleteMatch(m.id)} title="Delete match" style={{ background: "none", border: "none", cursor: "pointer", color: C.border, fontSize: 16, padding: "0 4px", flexShrink: 0 }}>✕</button>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          </>)}
         </div>
-      ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
-          <RankWidget title="Handicap" players={userStats} valueKey="handicap" ascending={true}
-            format={v => v % 1 === 0 ? `${v}.0` : `${v}`} />
-          <RankWidget title="Avg Score vs Par" players={userStats} valueKey="avgScore" ascending={true}
-            format={v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)} />
-          <RankWidget title="GIR %" players={userStats} valueKey="girPct" ascending={false} suffix="%" />
-          <RankWidget title="Avg Putts / Hole" players={userStats} valueKey="avgPutts" ascending={true} />
-          <RankWidget title="FW Hit %" players={userStats} valueKey="fhPct" ascending={false} suffix="%" />
-          <RankWidget title="Up & Down %" players={userStats} valueKey="udPct" ascending={false} suffix="%" />
-        </div>
+      )}
+
+      {/* ── STATS MODE (existing rank widgets) ───────────────────────────────── */}
+      {lbMode === "stats" && (
+        profiles.length === 0 ? (
+          <div style={{ textAlign: "center", padding: "60px 0", color: C.muted }}>
+            <div style={{ fontSize: 36 }}>🏆</div>
+            <div style={{ marginTop: 10, fontSize: 15 }}>No players yet. Be the first to sign up.</div>
+          </div>
+        ) : (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))", gap: 16 }}>
+            <RankWidget title="Handicap" players={userStats} valueKey="handicap" ascending={true}
+              format={v => v % 1 === 0 ? `${v}.0` : `${v}`} />
+            <RankWidget title="Avg Score vs Par" players={userStats} valueKey="avgScore" ascending={true}
+              format={v => v >= 0 ? `+${v.toFixed(1)}` : v.toFixed(1)} />
+            <RankWidget title="GIR %" players={userStats} valueKey="girPct" ascending={false} suffix="%" />
+            <RankWidget title="Avg Putts / Hole" players={userStats} valueKey="avgPutts" ascending={true} />
+            <RankWidget title="FW Hit %" players={userStats} valueKey="fhPct" ascending={false} suffix="%" />
+            <RankWidget title="Up & Down %" players={userStats} valueKey="udPct" ascending={false} suffix="%" />
+          </div>
+        )
       )}
     </div>
   );
@@ -2004,9 +2278,11 @@ function ClubSelect({ value, onChange, placeholder = "—" }) {
 }
 
 // ── SCORECARD ENTRY ──────────────────────────────────────────────────────────
-function ScorecardEntry({ onSave, onUpdate, editingRound, courses, sgMode = false }) {
+function ScorecardEntry({ onSave, onUpdate, editingRound, courses, sgMode = false, userId = null, profiles = [], onSaveMatches = null }) {
   const [round, setRound] = useState(() => editingRound ? JSON.parse(JSON.stringify(editingRound)) : defaultRound());
   const [saved, setSaved] = useState(false);
+  const [matchEntries, setMatchEntries] = useState([]); // [{giverId, receiverId, strokes, result}]
+  const [matchSaved, setMatchSaved] = useState(false);
 
   // When editingRound changes (user clicks Edit on a different round), re-seed
   useEffect(() => {
@@ -2082,7 +2358,139 @@ function ScorecardEntry({ onSave, onUpdate, editingRound, courses, sgMode = fals
         </div>
       </div>
 
-      {/* ── SG mode indicator banner ─────────────────────────────────────── */}
+      {/* ── Match Play Section ─────────────────────────────────────────────── */}
+      {(() => {
+        // Only the logged-in user appears as "you" in match dropdowns.
+        // Other players are drawn from profiles (minus self).
+        const otherProfiles = profiles.filter(p => p.id !== userId && p.first_name);
+        const allPlayers = [
+          ...(profiles.find(p => p.id === userId) ? [{ ...profiles.find(p => p.id === userId), isMe: true }] : []),
+          ...otherProfiles,
+        ];
+        const pName = (id) => {
+          if (id === userId) return "You";
+          const p = profiles.find(p => p.id === id);
+          return p ? `${p.first_name} ${p.last_name[0]}.` : "—";
+        };
+
+        const addMatch = () => setMatchEntries(m => [...m, { giverId: userId || "", receiverId: "", strokes: 0, result: "" }]);
+        const removeMatch = (i) => setMatchEntries(m => m.filter((_, j) => j !== i));
+        const updateMatch = (i, field, val) => setMatchEntries(m => m.map((e, j) => j === i ? { ...e, [field]: val } : e));
+
+        const canSaveMatches = matchEntries.length > 0 &&
+          matchEntries.every(e => e.giverId && e.receiverId && e.giverId !== e.receiverId && e.result);
+
+        const handleSaveMatchesClick = async () => {
+          if (!canSaveMatches || !onSaveMatches) return;
+          const courseObj = round.courseId ? courses.find(c => c.id === round.courseId) : null;
+          const payload = matchEntries.map(e => ({
+            round_date:  round.date,
+            course_name: courseObj?.name || round.course || null,
+            giver_id:    e.giverId,
+            receiver_id: e.receiverId,
+            strokes:     +e.strokes,
+            result:      e.result,
+            stake:       10,
+          }));
+          await onSaveMatches(payload);
+          setMatchSaved(true);
+          setTimeout(() => setMatchSaved(false), 2000);
+        };
+
+        const resultBtn = (i, val, label, color) => {
+          const active = matchEntries[i]?.result === val;
+          return (
+            <button onClick={() => updateMatch(i, "result", active ? "" : val)} style={{
+              padding: "5px 12px", borderRadius: 8, fontSize: 12, fontWeight: 700,
+              cursor: "pointer", fontFamily: "inherit", transition: "all 0.15s",
+              border: `1.5px solid ${active ? color : C.border}`,
+              background: active ? color : "transparent",
+              color: active ? "#fff" : C.muted,
+            }}>{label}</button>
+          );
+        };
+
+        const selectStyle = {
+          border: `1px solid ${C.border}`, borderRadius: 8, padding: "6px 10px",
+          fontSize: 13, background: C.bg, color: C.text, outline: "none",
+          fontFamily: "inherit", cursor: "pointer",
+        };
+
+        return (
+          <div style={{ background: C.surface, border: `1px solid ${C.border}`, borderRadius: 16, padding: 20, display: "flex", flexDirection: "column", gap: 14 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ fontSize: 16 }}>🏆</span>
+                <span style={{ fontSize: 13, fontWeight: 700, color: C.text }}>Match Play</span>
+                <span style={{ fontSize: 11, color: C.muted }}>optional</span>
+              </div>
+              <button onClick={addMatch} style={{
+                background: C.accentLight, color: C.accent, border: `1px solid ${C.accentMid}`,
+                borderRadius: 8, padding: "5px 14px", fontSize: 12, fontWeight: 700,
+                cursor: "pointer", fontFamily: "inherit",
+              }}>+ Add Match</button>
+            </div>
+
+            {matchEntries.length === 0 && (
+              <div style={{ fontSize: 12, color: C.muted, fontStyle: "italic" }}>
+                Log $10 match play results for the Season Standings. Hit "+ Add Match" for each 1v1 that happened today.
+              </div>
+            )}
+
+            {matchEntries.map((entry, i) => (
+              <div key={i} style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, padding: "14px 16px", display: "flex", flexDirection: "column", gap: 10 }}>
+                {/* Row 1: giver → strokes → receiver */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  {/* Giver dropdown */}
+                  <select value={entry.giverId} onChange={e => updateMatch(i, "giverId", e.target.value)} style={selectStyle}>
+                    <option value="">— Giving strokes —</option>
+                    {allPlayers.map(p => (
+                      <option key={p.id} value={p.id}>{p.isMe ? "You" : `${p.first_name} ${p.last_name}`}</option>
+                    ))}
+                  </select>
+                  <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>gave</span>
+                  {/* Strokes input */}
+                  <input
+                    type="number" min={0} max={36} value={entry.strokes}
+                    onChange={e => updateMatch(i, "strokes", e.target.value)}
+                    style={{ width: 52, textAlign: "center", border: `1.5px solid ${C.accent}`, borderRadius: 8, padding: "6px 4px", fontSize: 14, fontWeight: 700, color: C.accent, background: C.accentLight, outline: "none", fontFamily: "'DM Mono', monospace" }}
+                  />
+                  <span style={{ fontSize: 12, color: C.muted, fontWeight: 600 }}>strokes to</span>
+                  {/* Receiver dropdown */}
+                  <select value={entry.receiverId} onChange={e => updateMatch(i, "receiverId", e.target.value)} style={selectStyle}>
+                    <option value="">— Receiving strokes —</option>
+                    {allPlayers.filter(p => p.id !== entry.giverId).map(p => (
+                      <option key={p.id} value={p.id}>{p.isMe ? "You" : `${p.first_name} ${p.last_name}`}</option>
+                    ))}
+                  </select>
+                  <button onClick={() => removeMatch(i)} style={{ marginLeft: "auto", background: "none", border: "none", cursor: "pointer", color: C.muted, fontSize: 16, lineHeight: 1, padding: "2px 4px" }}>✕</button>
+                </div>
+                {/* Row 2: result */}
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                  <span style={{ fontSize: 12, color: C.muted, fontWeight: 600, marginRight: 4 }}>Result:</span>
+                  {resultBtn(i, "giver",    entry.giverId    ? `${pName(entry.giverId)} won`    : "Giver won",    C.accentMid)}
+                  {resultBtn(i, "draw",     "Draw",                                                               C.yellow)}
+                  {resultBtn(i, "receiver", entry.receiverId ? `${pName(entry.receiverId)} won` : "Receiver won", C.red)}
+                </div>
+              </div>
+            ))}
+
+            {matchEntries.length > 0 && (
+              <button onClick={handleSaveMatchesClick} disabled={!canSaveMatches} style={{
+                background: matchSaved ? C.accentMid : canSaveMatches ? C.accent : C.border,
+                color: canSaveMatches ? "#fff" : C.muted,
+                border: "none", borderRadius: 10, padding: "10px 22px",
+                fontSize: 13, fontWeight: 700, cursor: canSaveMatches ? "pointer" : "default",
+                alignSelf: "flex-start", transition: "all 0.2s", fontFamily: "inherit",
+              }}>
+                {matchSaved ? "✓ Matches Saved" : `Save ${matchEntries.length} Match${matchEntries.length !== 1 ? "es" : ""}`}
+              </button>
+            )}
+          </div>
+        );
+      })()}
+
+      {/* ── SG mode indicator banner ─────────────────────────────────────────── */}
       {sgMode && (
         <div style={{ background: C.accentLight, border: `1px solid ${C.accentMid}`, borderRadius: 12, padding: "12px 18px", display: "flex", alignItems: "flex-start", gap: 12 }}>
           <span style={{ fontSize: 18, flexShrink: 0 }}>📍</span>
@@ -2558,6 +2966,7 @@ function History({ rounds, onDelete, onEdit }) {
 export default function GolfTracker() {
   const [tab, setTab] = useState("dashboard");
   const [rounds, setRounds] = useState([]);
+  const [matches, setMatches] = useState([]);
   const [courses, setCourses] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [loaded, setLoaded] = useState(false);
@@ -2580,6 +2989,7 @@ export default function GolfTracker() {
   useEffect(() => {
     loadCourses().then(setCourses);
     loadProfiles().then(setProfiles);
+    loadMatches().then(setMatches);
   }, []);
 
   // ── Load user's rounds when session is available ───────────────────────────
@@ -2621,6 +3031,18 @@ export default function GolfTracker() {
       return updated;
     });
     setEditingRound(null);
+  }, [token]);
+
+  const handleSaveMatches = useCallback(async (newMatches) => {
+    const saved = await saveMatches(newMatches, token);
+    if (saved && saved.length) {
+      setMatches(prev => [...prev, ...saved]);
+    }
+  }, [token]);
+
+  const handleDeleteMatch = useCallback(async (id) => {
+    await deleteMatch(id, token);
+    setMatches(prev => prev.filter(m => m.id !== id));
   }, [token]);
 
   const handleSaveCourse = useCallback(async (course, editingId) => {
@@ -2723,7 +3145,7 @@ export default function GolfTracker() {
       {/* Content */}
       <div style={{ width: "94vw", margin: "0 auto", padding: "32px 0" }}>
         {/* Leaderboard is public — visible without login */}
-        {tab === "leaderboard" && <Leaderboard rounds={rounds} courses={courses} profiles={profiles} userId={userId} />}
+        {tab === "leaderboard" && <Leaderboard rounds={rounds} courses={courses} profiles={profiles} userId={userId} matches={matches} onDeleteMatch={handleDeleteMatch} />}
 
         {!session && tab !== "leaderboard" ? (
           <div style={{ textAlign: "center", padding: "100px 0", color: C.muted }}>
@@ -2740,7 +3162,7 @@ export default function GolfTracker() {
         ) : session && tab !== "leaderboard" ? (
           <>
             {tab === "dashboard" && <Dashboard rounds={rounds} courses={courses} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} userHandicap={profiles.find(p => p.id === userId)?.handicap ?? null} />}
-            {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
+            {tab === "log" && <ScorecardEntry courses={courses} editingRound={editingRound} sgMode={!!(profiles.find(p => p.id === userId)?.sg_mode)} userId={userId} profiles={profiles} onSaveMatches={handleSaveMatches} onSave={r => { handleSaveRound(r); setTab("history"); }} onUpdate={r => { handleUpdateRound(r); setTab("history"); }} />}
             {tab === "history" && <History rounds={rounds} onDelete={handleDeleteRound} onEdit={handleEditRound} />}
             {tab === "courses" && <Courses courses={courses} onSave={handleSaveCourse} onDelete={handleDeleteCourse} userId={userId} />}
           </>
